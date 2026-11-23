@@ -1,0 +1,177 @@
+package config
+
+import (
+	"maps"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+const SchemaVersion = 2
+
+const (
+	defaultName = "default"
+	cloudUI     = "https://datalens.ru"
+	cloudAPI    = "https://api.datalens.tech"
+	teamUI      = "https://datalens.yandex-team.ru"
+	teamAPI     = "https://api.datalens.yandex.net"
+)
+
+type Profile struct {
+	Installation   string `json:"installationType"`
+	Endpoint       string `json:"endpoint"`
+	APIEndpoint    string `json:"apiEndpoint"`
+	OrganizationID string `json:"organizationId,omitempty"`
+	APIVersion     string `json:"apiVersion,omitempty"`
+}
+
+type Document struct {
+	Version        int                `json:"version"`
+	CurrentProfile string             `json:"currentProfile,omitempty"`
+	Profiles       map[string]Profile `json:"profiles"`
+}
+
+type Error struct {
+	Code    string
+	Message string
+}
+
+func (e *Error) Error() string { return e.Message }
+
+func failure(code, message string) error {
+	return &Error{Code: code, Message: message}
+}
+
+var profileName = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+func validName(name string) bool {
+	return profileName.MatchString(name) && name != "." && name != ".."
+}
+
+func NormalizeProfile(p Profile) (Profile, error) {
+	if strings.ContainsFunc(p.APIVersion+p.OrganizationID, func(r rune) bool { return r < 32 || r == 127 }) {
+		return Profile{}, failure("PROFILE_INVALID", "Profile settings must not contain control characters.")
+	}
+	p.Installation = strings.TrimSpace(p.Installation)
+	p.Endpoint = strings.TrimSpace(p.Endpoint)
+	p.APIEndpoint = strings.TrimSpace(p.APIEndpoint)
+	p.OrganizationID = strings.TrimSpace(p.OrganizationID)
+	p.APIVersion = strings.TrimSpace(p.APIVersion)
+
+	switch p.Installation {
+	case "", "cloud", "yateam", "onpremise-standalone", "stackland":
+	default:
+		return Profile{}, failure("PROFILE_INVALID", "Installation type must be cloud, yateam, onpremise-standalone, or stackland.")
+	}
+
+	if p.Endpoint == "" {
+		switch p.Installation {
+		case "", "cloud":
+			p.Endpoint = cloudUI
+		case "yateam":
+			p.Endpoint = teamUI
+		default:
+			return Profile{}, failure("PROFILE_INVALID", "An HTTPS UI endpoint is required for this installation type.")
+		}
+	}
+	ui, err := normalizeEndpoint(p.Endpoint)
+	if err != nil {
+		return Profile{}, err
+	}
+	p.Endpoint = ui.String()
+	var knownType, api string
+	switch ui.Scheme + "://" + ui.Host {
+	case cloudUI:
+		knownType, api = "cloud", cloudAPI
+	case teamUI:
+		knownType, api = "yateam", teamAPI
+	default:
+		api = p.Endpoint + "/api"
+	}
+	if p.Installation == "" {
+		if knownType == "" {
+			return Profile{}, failure("PROFILE_INVALID", "Use --installation-type for a custom UI endpoint.")
+		}
+		p.Installation = knownType
+	}
+	if knownType != "" && p.Installation != knownType {
+		return Profile{}, failure("PROFILE_INVALID", "The installation type does not match the UI endpoint.")
+	}
+	if p.Installation != "cloud" && p.OrganizationID != "" {
+		return Profile{}, failure("PROFILE_INVALID", "Organization IDs are supported only for Cloud profiles.")
+	}
+	if p.APIEndpoint == "" {
+		p.APIEndpoint = api
+	} else {
+		endpoint, err := normalizeEndpoint(p.APIEndpoint)
+		if err != nil {
+			return Profile{}, err
+		}
+		p.APIEndpoint = endpoint.String()
+	}
+	return p, nil
+}
+
+func normalizeEndpoint(endpoint string) (*url.URL, error) {
+	if !strings.Contains(endpoint, "://") && !strings.HasPrefix(endpoint, "/") {
+		endpoint = "https://" + endpoint
+	}
+	u, err := url.Parse(strings.TrimRight(endpoint, "/"))
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Opaque != "" || strings.ContainsAny(endpoint, "?#") {
+		return nil, failure("PROFILE_INVALID", "Endpoints must be HTTPS URLs without credentials, query, or fragment.")
+	}
+	if strings.HasSuffix(u.Host, ":") {
+		return nil, failure("PROFILE_INVALID", "Endpoint has an invalid port.")
+	}
+	if zone := strings.IndexByte(u.Host, '%'); zone >= 0 && strings.HasPrefix(u.Host, "[") {
+		u.Host = strings.ToLower(u.Host[:zone]) + u.Host[zone:]
+	} else {
+		u.Host = strings.ToLower(u.Host)
+	}
+	if port := u.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return nil, failure("PROFILE_INVALID", "Endpoint has an invalid port.")
+		}
+		if n == 443 {
+			u.Host = strings.TrimSuffix(u.Host, ":"+port)
+		}
+	}
+	return u, nil
+}
+
+func (d Document) ActiveName() string {
+	if d.CurrentProfile != "" {
+		return d.CurrentProfile
+	}
+	return defaultName
+}
+
+func (d Document) EffectiveProfiles() map[string]Profile {
+	profiles := map[string]Profile{defaultName: {Installation: "cloud", Endpoint: cloudUI, APIEndpoint: cloudAPI}}
+	maps.Copy(profiles, d.Profiles)
+	return profiles
+}
+
+func Resolve(doc Document, explicitName, envName string) (string, Profile, error) {
+	name := explicitName
+	if name == "" {
+		name = envName
+	}
+	if name == "" {
+		name = doc.ActiveName()
+	}
+	if !validName(name) {
+		return "", Profile{}, failure("PROFILE_INVALID", "Profile names may contain only letters, digits, dots, underscores, and hyphens.")
+	}
+	p, ok := doc.Profiles[name]
+	if !ok && name != defaultName {
+		return "", Profile{}, failure("PROFILE_NOT_FOUND", "The selected profile does not exist.")
+	}
+	p, err := NormalizeProfile(p)
+	if err != nil {
+		return "", Profile{}, err
+	}
+	return name, p, nil
+}

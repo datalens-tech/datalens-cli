@@ -53,11 +53,11 @@ func TestResolveToken(t *testing.T) {
 }
 
 func TestRPCInstallationHeadersAndPayload(t *testing.T) {
-	for _, test := range []struct{ installation, scheme, org, version string }{
-		{"cloud", "Bearer", "test-org", "3"},
-		{"yateam", "OAuth", "", "latest"},
-		{"onpremise-standalone", "Bearer", "", "3"},
-		{"stackland", "Bearer", "", "3"},
+	for _, test := range []struct{ installation, scheme, org string }{
+		{"cloud", "Bearer", "test-org"},
+		{"yateam", "OAuth", ""},
+		{"onpremise-standalone", "Bearer", ""},
+		{"stackland", "Bearer", ""},
 	} {
 		t.Run(test.installation, func(t *testing.T) {
 			const args = `{"id":9007199254740993}`
@@ -68,7 +68,7 @@ func TestRPCInstallationHeadersAndPayload(t *testing.T) {
 				if got := r.Header.Get("Authorization"); got != test.scheme+" fake-token" {
 					t.Error("unexpected auth header")
 				}
-				if r.Header.Get("x-dl-org-id") != test.org || r.Header.Get("x-dl-api-version") != test.version ||
+				if r.Header.Get("x-dl-org-id") != test.org || r.Header.Get("x-dl-api-version") != "3" ||
 					r.Header.Get("Content-Type") != "application/json" || !strings.HasPrefix(r.UserAgent(), "datalens-cli/") {
 					t.Error("unexpected request headers")
 				}
@@ -80,9 +80,6 @@ func TestRPCInstallationHeadersAndPayload(t *testing.T) {
 			}))
 			defer srv.Close()
 			p := config.Profile{Installation: test.installation, APIEndpoint: srv.URL + "/custom/api/", Endpoint: srv.URL, OrganizationID: test.org}
-			if test.version != "3" {
-				p.APIVersion = test.version
-			}
 			res, err := Call(t.Context(), srv.Client().Transport, p, "fake-token", "getDetails", json.RawMessage(args))
 			if err != nil || string(res) != "[9007199254740993]" {
 				t.Fatalf("got %s, %v", res, err)

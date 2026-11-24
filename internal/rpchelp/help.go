@@ -2,7 +2,7 @@ package rpchelp
 
 import (
 	"bytes"
-	"embed"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,8 +10,11 @@ import (
 	"sync"
 )
 
-//go:embed cloud.json enterprise.json
-var documents embed.FS
+//go:embed cloud.json
+var cloudData []byte
+
+//go:embed enterprise.json
+var enterpriseData []byte
 
 type operation struct {
 	Description string          `json:"description"`
@@ -25,51 +28,46 @@ type catalog struct {
 	Schemas map[string]json.RawMessage `json:"schemas"`
 }
 
-var load = sync.OnceValues(func() ([2]catalog, error) {
-	var references [2]catalog
-	for i, name := range []string{"cloud.json", "enterprise.json"} {
-		data, err := documents.ReadFile(name)
-		if err != nil {
-			return references, err
-		}
-		if err := json.Unmarshal(data, &references[i]); err != nil {
-			return references, err
-		}
-	}
-	return references, nil
-})
+func bundled(data []byte) func() (catalog, error) {
+	return sync.OnceValues(func() (catalog, error) {
+		var c catalog
+		err := json.Unmarshal(data, &c)
+		return c, err
+	})
+}
 
-func Write(w io.Writer, action string) error {
-	references, err := load()
+var cloud = bundled(cloudData)
+var enterprise = bundled(enterpriseData)
+
+func Write(w io.Writer, action, installation string) error {
+	usage := fmt.Sprintf("Usage:\n  datalens rpc %s [--args JSON]\n", action)
+	var edition string
+	var load func() (catalog, error)
+	switch installation {
+	case "cloud":
+		edition, load = "Cloud", cloud
+	case "onpremise-standalone", "stackland":
+		edition, load = "Enterprise", enterprise
+	case "yateam":
+		_, err := fmt.Fprint(w, usage, "\nNo bundled documentation for Yandex Team RPC actions. You can still call the action directly.\n")
+		return err
+	default:
+		return fmt.Errorf("unknown installation type %q", installation)
+	}
+	c, err := load()
 	if err != nil {
 		return err
 	}
-	var entries [2]string
-	var present [2]bool
-	for i, reference := range references {
-		if op, ok := reference.Actions[action]; ok {
-			present[i] = true
-			entries[i], err = reference.format(action, op)
-			if err != nil {
-				return err
-			}
-		}
+	op, ok := c.Actions[action]
+	if !ok {
+		_, err := fmt.Fprintf(w, "%s\nNo bundled documentation for this RPC action in the %s API reference.\n", usage, edition)
+		return err
 	}
-	var text strings.Builder
-	fmt.Fprintf(&text, "Usage:\n  datalens rpc %s [--args JSON]\n", action)
-	switch {
-	case !present[0] && !present[1]:
-		text.WriteString("\nNo bundled documentation for this RPC action.\n")
-	case present[0] && present[1] && entries[0] == entries[1]:
-		fmt.Fprintf(&text, "\nCloud and Enterprise API reference\n%s", entries[0])
-	default:
-		for i, edition := range []string{"Cloud", "Enterprise"} {
-			if present[i] {
-				fmt.Fprintf(&text, "\n%s API reference\n%s", edition, entries[i])
-			}
-		}
+	body, err := c.format(action, op)
+	if err != nil {
+		return err
 	}
-	_, err = io.WriteString(w, text.String())
+	_, err = fmt.Fprintf(w, "%s\n%s API reference\n%s", usage, edition, body)
 	return err
 }
 

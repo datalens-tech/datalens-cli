@@ -1,10 +1,12 @@
 import argparse
 import json
+import re
 from pathlib import Path
 
 
 SCHEMA_REF = "#/components/schemas/"
-CATALOG_DIR = Path(__file__).resolve().parents[1] / "internal" / "rpchelp"
+INTERNAL_DIR = Path(__file__).resolve().parents[1] / "internal"
+CATALOG_DIR = INTERNAL_DIR / "rpchelp"
 
 
 def local_ref(ref, prefix):
@@ -122,9 +124,20 @@ def main():
     parser = argparse.ArgumentParser(description="Generate offline RPC help from the public datalens-tech/datalens-sdk OpenAPI snapshots.")
     parser.add_argument("spec_dir", type=Path, help="datalens-sdk/spec directory")
     args = parser.parse_args()
+    source = (INTERNAL_DIR / "buildinfo" / "buildinfo.go").read_text(encoding="utf-8")
+    match = re.search(r'^const APIVersion = "([0-9]+)"$', source, re.MULTILINE)
+    if match is None:
+        parser.error("cannot read the pinned API version from buildinfo.go")
+    expected_version = match.group(1)
+    catalogs = {}
     for edition, filename in [("cloud", "yacloud.json"), ("enterprise", "enterprise.json")]:
         spec = json.loads((args.spec_dir / filename).read_text(encoding="utf-8"))
-        write_catalog(catalog(spec), CATALOG_DIR / f"{edition}.json")
+        version = spec.get("info", {}).get("version")
+        if version != expected_version:
+            parser.error(f"{filename}: expected API version {expected_version!r}, got {version!r}")
+        catalogs[edition] = catalog(spec)
+    for edition, data in catalogs.items():
+        write_catalog(data, CATALOG_DIR / f"{edition}.json")
 
 
 if __name__ == "__main__":

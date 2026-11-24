@@ -101,7 +101,7 @@ func TestNormalizeProfile(t *testing.T) {
 		{Installation: "yateam"},
 		{Installation: "cloud", OrganizationID: "org"},
 		{Installation: "onpremise-standalone", Endpoint: "https://example.com:8443/api"},
-		{Installation: "stackland", Endpoint: "https://[::1]/api", APIVersion: "3"},
+		{Installation: "stackland", Endpoint: "https://[::1]/api"},
 	} {
 		got, err := NormalizeProfile(p)
 		if err != nil || got.Endpoint == "" {
@@ -114,8 +114,6 @@ func TestNormalizeProfile(t *testing.T) {
 		{Installation: "onpremise-standalone"}, {Installation: "stackland"},
 		{Installation: "yateam", OrganizationID: "org"},
 		{Installation: "cloud", OrganizationID: "org\r\nheader: value"},
-		{Installation: "yateam", APIVersion: "3\nheader: value"},
-		{Installation: "yateam", APIVersion: "3\x01value"},
 	} {
 		_, err := NormalizeProfile(p)
 		requireCode(t, err, "PROFILE_INVALID")
@@ -178,15 +176,13 @@ func TestConfigureAndRestoreDefault(t *testing.T) {
 	requireCode(t, s.Delete(t.Context(), defaultName), "PROFILE_IMPLICIT")
 }
 
-func TestProfileHeaderFieldsRejectASCIIControls(t *testing.T) {
+func TestOrganizationIDRejectsASCIIControls(t *testing.T) {
 	for c := rune(0); c <= 127; c++ {
 		if c >= 32 && c != 127 {
 			continue
 		}
 		for _, value := range []string{string(c) + "value", "value" + string(c), "va" + string(c) + "lue"} {
 			_, err := NormalizeProfile(Profile{Installation: "cloud", OrganizationID: value})
-			requireCode(t, err, "PROFILE_INVALID")
-			_, err = NormalizeProfile(Profile{Installation: "yateam", APIVersion: value})
 			requireCode(t, err, "PROFILE_INVALID")
 		}
 	}
@@ -215,6 +211,32 @@ func TestInvalidMutationsPreserveConfiguration(t *testing.T) {
 	}
 }
 
+func TestLegacyAPIVersionIsDroppedOnWrite(t *testing.T) {
+	s := testStore(t)
+	if err := os.MkdirAll(s.Dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.Dir, "config.json")
+	const config = `{"version":2,"profiles":{"team":{"installationType":"yateam","apiVersion":"1"}}}`
+	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Use(t.Context(), "team"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"apiVersion"`) {
+		t.Fatal("saved obsolete apiVersion")
+	}
+	doc, err := s.Load()
+	if err != nil || doc.CurrentProfile != "team" || doc.Profiles["team"].Installation != "yateam" {
+		t.Fatalf("updated document = %+v, %v", doc, err)
+	}
+}
+
 func TestInvalidDocumentsArePreserved(t *testing.T) {
 	for _, tc := range []struct{ content, code string }{
 		{`{"version":3,"profiles":{},"future":"secret"}`, "CONFIG_VERSION_UNSUPPORTED"},
@@ -226,6 +248,7 @@ func TestInvalidDocumentsArePreserved(t *testing.T) {
 		{`{"version":2,"profiles":null}`, "CONFIG_INVALID"},
 		{`{"version":2,"profiles":{},"unknown":true}`, "CONFIG_INVALID"},
 		{`{"version":2,"profiles":{"team":{"installation":"cloud"}}}`, "CONFIG_INVALID"},
+		{`{"version":2,"profiles":{"team":{"installationType":"cloud","unknown":true}}}`, "CONFIG_INVALID"},
 		{`{"version":2,"profiles":{"team":{"installationType":" \t "}}}`, "CONFIG_INVALID"},
 		{`{"version":2,"profiles":{"team":{"installationType":"unknown"}}}`, "CONFIG_INVALID"},
 		{`{"version":2,"profiles":{},"currentProfile":"missing"}`, "CONFIG_INVALID"},

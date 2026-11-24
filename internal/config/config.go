@@ -23,7 +23,6 @@ type Profile struct {
 	Endpoint       string `json:"endpoint"`
 	APIEndpoint    string `json:"apiEndpoint"`
 	OrganizationID string `json:"organizationId,omitempty"`
-	APIVersion     string `json:"apiVersion,omitempty"`
 }
 
 type Document struct {
@@ -50,14 +49,13 @@ func validName(name string) bool {
 }
 
 func NormalizeProfile(p Profile) (Profile, error) {
-	if strings.ContainsFunc(p.APIVersion+p.OrganizationID, func(r rune) bool { return r < 32 || r == 127 }) {
+	if strings.ContainsFunc(p.OrganizationID, func(r rune) bool { return r < 32 || r == 127 }) {
 		return Profile{}, failure("PROFILE_INVALID", "Profile settings must not contain control characters.")
 	}
 	p.Installation = strings.TrimSpace(p.Installation)
 	p.Endpoint = strings.TrimSpace(p.Endpoint)
 	p.APIEndpoint = strings.TrimSpace(p.APIEndpoint)
 	p.OrganizationID = strings.TrimSpace(p.OrganizationID)
-	p.APIVersion = strings.TrimSpace(p.APIVersion)
 
 	switch p.Installation {
 	case "", "cloud", "yateam", "onpremise-standalone", "stackland":

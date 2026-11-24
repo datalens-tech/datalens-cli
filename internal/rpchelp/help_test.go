@@ -7,17 +7,21 @@ import (
 )
 
 func TestEditionSpecificDescriptions(t *testing.T) {
-	var text strings.Builder
-	if err := Write(&text, "listSharedEntryAccessBindings"); err != nil {
-		t.Fatal(err)
-	}
-	for _, phrase := range []string{
-		"Cloud API reference", "Enterprise API reference",
-		"specified common object", "specified shared entry",
+	for _, tc := range []struct{ installation, action, want, absent string }{
+		{"cloud", "listSharedEntryAccessBindings", "specified common object", "specified shared entry"},
+		{"onpremise-standalone", "listSharedEntryAccessBindings", "specified shared entry", "specified common object"},
+		{"stackland", "getTenantDetails", "No bundled documentation", "current tenant state"},
+		{"yateam", "getWorkbook", "No bundled documentation for Yandex Team", "Returns the specified workbook"},
 	} {
-		if !strings.Contains(text.String(), phrase) {
-			t.Errorf("missing %q in help", phrase)
-		}
+		t.Run(tc.installation, func(t *testing.T) {
+			var text strings.Builder
+			if err := Write(&text, tc.action, tc.installation); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(text.String(), tc.want) || strings.Contains(text.String(), tc.absent) {
+				t.Fatalf("unexpected help: %s", text.String())
+			}
+		})
 	}
 }
 

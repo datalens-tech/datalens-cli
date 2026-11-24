@@ -72,7 +72,7 @@ func TestVersionJSONDiagnostics(t *testing.T) {
 				t.Fatalf("version failed: %#v", result)
 			}
 			want := map[string]any{
-				"version": "0.1.2", "revision": "abcdef", "os": "linux", "arch": "amd64", "goVersion": "go-test",
+				"version": "0.1.2", "apiVersion": buildinfo.APIVersion, "revision": "abcdef", "os": "linux", "arch": "amd64", "goVersion": "go-test",
 				"diagnostics": map[string]any{"version": "0.1.2", "operation": "datalens version", "nonInteractive": test.nonInteract},
 			}
 			if got := document(t, result.stdout); !reflect.DeepEqual(got, want) {
@@ -163,14 +163,14 @@ func TestCustomProfileEndpoints(t *testing.T) {
 	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
 	args := []string{"profiles", "create", "--name=corp", "--endpoint=https://corp.example.com", "--format=json"}
 	assertFailure(t, execute(context.Background(), options, args...), 2, "PROFILE_INVALID")
-	args = append(args, "--installation-type=onpremise-standalone", "--api-endpoint=https://rpc.example.com/dl", "--api-version=1")
+	args = append(args, "--installation-type=onpremise-standalone", "--api-endpoint=https://rpc.example.com/dl")
 	if result := execute(context.Background(), options, args...); result.code != 0 {
 		t.Fatalf("create: %#v", result)
 	}
 	result := execute(context.Background(), options, "profiles", "list", "--format=json")
 	want := map[string]any{
 		"name": "corp", "installationType": "onpremise-standalone", "endpoint": "https://corp.example.com",
-		"apiEndpoint": "https://rpc.example.com/dl", "apiVersion": "1",
+		"apiEndpoint": "https://rpc.example.com/dl",
 	}
 	if got := document(t, result.stdout)["profiles"].([]any)[0]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("custom profile: %#v", got)
@@ -211,7 +211,7 @@ func TestProfileUpdateOrganization(t *testing.T) {
 		return document(t, result.stdout)
 	}
 	run("profiles", "create", "--name=work", "--installation-type=cloud", "--endpoint=https://work.example.com",
-		"--api-endpoint=https://rpc.example.com/custom", "--api-version=4", "--organization=old-org")
+		"--api-endpoint=https://rpc.example.com/custom", "--organization=old-org")
 	run("profiles", "create", "--name=team", "--installation-type=yateam")
 	run("profiles", "activate", "team")
 	want := run("profiles", "list")
@@ -284,6 +284,7 @@ func TestUsageFailuresAreJSONOnStderr(t *testing.T) {
 		{"missing", "--format", "json"},
 		{"profiles", "missing", "--format", "json"},
 		{"version", "extra", "--format", "json"},
+		{"profiles", "create", "--name=work", "--api-version=4", "--format=json"},
 		{"version", "--unknown", "--format", "json"},
 		{"profiles", "create", "--format", "json"},
 		{"profiles", "list", "extra", "--format", "json"},
@@ -392,6 +393,7 @@ func TestHelpFlagRejectsUnknownSubcommand(t *testing.T) {
 }
 
 func TestHelpFlagResolvesCommandAndAllowsLeafArguments(t *testing.T) {
+	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
 	for _, test := range []struct {
 		args []string
 		path string
@@ -401,7 +403,7 @@ func TestHelpFlagResolvesCommandAndAllowsLeafArguments(t *testing.T) {
 		{[]string{"rpc", "getTenantDetails", "--help"}, "rpc"},
 		{[]string{"rpc", "-h"}, "rpc"},
 	} {
-		result := execute(context.Background(), testOptions(nil), test.args...)
+		result := execute(context.Background(), options, test.args...)
 		if result.code != 0 || result.stderr != "" || !strings.Contains(result.stdout, "Usage:\n  datalens "+test.path) {
 			t.Errorf("%v: %#v", test.args, result)
 		}
@@ -444,7 +446,7 @@ func testOptions(env map[string]string) cli.Options {
 		In: strings.NewReader(""), LookupEnv: func(name string) string { return env[name] },
 		UserConfigDir: func() (string, error) { return "", errors.New("unavailable") },
 		IsTerminal:    func(io.Reader) bool { return false },
-		Build:         buildinfo.Info{Version: "0.1.2", Revision: "abcdef", OS: "linux", Arch: "amd64", GoVersion: "go-test"},
+		Build:         buildinfo.Info{APIVersion: buildinfo.APIVersion, Version: "0.1.2", Revision: "abcdef", OS: "linux", Arch: "amd64", GoVersion: "go-test"},
 	}
 }
 

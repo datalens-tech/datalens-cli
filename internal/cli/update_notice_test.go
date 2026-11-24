@@ -38,6 +38,7 @@ func TestUpdateNoticeEligibility(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			options := testOptions(tc.env)
+			options.UserConfigDir = func() (string, error) { return t.TempDir(), nil }
 			if tc.version != "" {
 				options.Build.Version = tc.version
 			}

@@ -2,9 +2,11 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/datalens-tech/datalens-cli/internal/api"
 	"github.com/datalens-tech/datalens-cli/internal/config"
+	"github.com/datalens-tech/datalens-cli/internal/output"
 	"github.com/datalens-tech/datalens-cli/internal/rpchelp"
 	"github.com/spf13/cobra"
 )
@@ -28,7 +30,11 @@ func (a *app) rpcCommand() *cobra.Command {
 			if err := api.ValidateRPC(args[0], body); err != nil {
 				return err
 			}
-			return a.call(cmd, args[0], body)
+			profile, err := a.selectedProfile()
+			if err != nil {
+				return err
+			}
+			return a.call(cmd, profile, args[0], body)
 		},
 	}
 	command.Flags().StringVar(&argsJSON, "args", "{}", "RPC arguments as a JSON object")
@@ -39,9 +45,20 @@ func (a *app) tenantCommand() *cobra.Command {
 	tenant := &cobra.Command{Use: "tenant", Short: "Inspect the current tenant", Args: groupArgs, RunE: showHelp}
 	settings := &cobra.Command{Use: "settings", Short: "Inspect tenant settings", Args: groupArgs, RunE: showHelp}
 	settings.AddCommand(&cobra.Command{
-		Use: "show", Short: "Show tenant details and public settings", Args: exactArgs(0),
+		Use: "show", Short: "Show Cloud tenant details and public settings", Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return a.call(cmd, "getTenantDetails", json.RawMessage("{}"))
+			profile, err := a.selectedProfile()
+			if err != nil {
+				return err
+			}
+			if profile.Installation != "cloud" {
+				return &output.Error{
+					Code:     "UNSUPPORTED_INSTALLATION",
+					Message:  fmt.Sprintf("Tenant settings require a Cloud profile. The selected profile uses %s.", profile.Installation),
+					ExitCode: 2,
+				}
+			}
+			return a.call(cmd, profile, "getTenantDetails", json.RawMessage("{}"))
 		},
 	})
 	tenant.AddCommand(settings)
@@ -50,29 +67,37 @@ func (a *app) tenantCommand() *cobra.Command {
 
 func showHelp(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 
-func showRPCActionHelp(cmd *cobra.Command, args []string) error {
+func (a *app) showRPCActionHelp(cmd *cobra.Command, args []string) error {
 	if err := exactArgs(1)(cmd, args); err != nil {
 		return err
 	}
 	if err := api.ValidateAction(args[0]); err != nil {
 		return err
 	}
-	return rpchelp.Write(cmd.OutOrStdout(), args[0])
-}
-
-func (a *app) call(cmd *cobra.Command, action string, args json.RawMessage) error {
-	store, err := a.store()
+	if cmd.Flags().Changed("profile") && a.profile == "" {
+		return usageError("--profile requires a name")
+	}
+	profile, err := a.selectedProfile()
 	if err != nil {
 		return err
+	}
+	return rpchelp.Write(cmd.OutOrStdout(), args[0], profile.Installation)
+}
+
+func (a *app) selectedProfile() (config.Profile, error) {
+	store, err := a.store()
+	if err != nil {
+		return config.Profile{}, err
 	}
 	doc, err := store.Load()
 	if err != nil {
-		return err
+		return config.Profile{}, err
 	}
 	_, profile, err := config.Resolve(doc, a.profile, a.options.LookupEnv("DATALENS_PROFILE"))
-	if err != nil {
-		return err
-	}
+	return profile, err
+}
+
+func (a *app) call(cmd *cobra.Command, profile config.Profile, action string, args json.RawMessage) error {
 	if profile.Installation == "cloud" && profile.OrganizationID == "" {
 		profile.OrganizationID = a.options.LookupEnv("DATALENS_ORG_ID")
 	}

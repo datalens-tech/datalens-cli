@@ -104,7 +104,7 @@ func Execute(ctx context.Context, args []string, options Options) int {
 			}
 		}
 		if cmd.Name() == "rpc" && cmd.Flags().NArg() > 0 {
-			if helpErr = showRPCActionHelp(cmd, cmd.Flags().Args()); helpErr != nil {
+			if helpErr = a.showRPCActionHelp(cmd, cmd.Flags().Args()); helpErr != nil {
 				return
 			}
 		} else {
@@ -212,10 +212,10 @@ func initHelpFlags(cmd *cobra.Command) {
 
 func (a *app) versionCommand() *cobra.Command {
 	return &cobra.Command{
-		Use: "version", Short: "Show version and build information", Args: exactArgs(0),
+		Use: "version", Short: "Show CLI version, API version, and build information", Args: exactArgs(0),
 		RunE: func(_ *cobra.Command, _ []string) error {
 			info := a.options.Build
-			return a.writer.Result(info, fmt.Sprintf("datalens %s (%s, %s/%s, %s)\n", info.Version, info.Revision, info.OS, info.Arch, info.GoVersion))
+			return a.writer.Result(info, fmt.Sprintf("datalens %s (%s, %s/%s, %s, API v%s)\n", info.Version, info.Revision, info.OS, info.Arch, info.GoVersion, info.APIVersion))
 		},
 	}
 }

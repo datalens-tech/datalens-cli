@@ -5,15 +5,18 @@ import (
 	"runtime/debug"
 )
 
+const APIVersion = "3"
+
 var Version = "dev"
 var Revision = "unknown"
 
 type Info struct {
-	Version   string `json:"version"`
-	Revision  string `json:"revision"`
-	OS        string `json:"os"`
-	Arch      string `json:"arch"`
-	GoVersion string `json:"goVersion"`
+	Version    string `json:"version"`
+	APIVersion string `json:"apiVersion"`
+	Revision   string `json:"revision"`
+	OS         string `json:"os"`
+	Arch       string `json:"arch"`
+	GoVersion  string `json:"goVersion"`
 }
 
 func Current() Info {
@@ -27,5 +30,12 @@ func Current() Info {
 			}
 		}
 	}
-	return Info{Version: Version, Revision: revision, OS: runtime.GOOS, Arch: runtime.GOARCH, GoVersion: runtime.Version()}
+	return Info{
+		Version:    Version,
+		APIVersion: APIVersion,
+		Revision:   revision,
+		OS:         runtime.GOOS,
+		Arch:       runtime.GOARCH,
+		GoVersion:  runtime.Version(),
+	}
 }

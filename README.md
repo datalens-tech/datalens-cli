@@ -1,6 +1,6 @@
 # DataLens CLI
 
-Use `datalens` to call DataLens RPC actions and inspect tenant settings. The first API request uses Yandex Cloud by default.
+Use `datalens` to call DataLens RPC actions and inspect Cloud tenant settings. The first API request uses Yandex Cloud by default.
 
 ## Build
 
@@ -51,13 +51,15 @@ datalens tenant settings show
 
 The shell runs `yc`; the CLI uses the supplied token. You can instead set `DATALENS_TOKEN_PATH` to a file containing the token. Token precedence is `--auth-token`, then `DATALENS_TOKEN`, then `DATALENS_TOKEN_PATH`. Tokens apply only to the current process and are never saved to a profile.
 
-`tenant settings show` calls `getTenantDetails` for the selected profile. Run `datalens rpc` for general help. Use `datalens rpc ACTION --help` to look up an action's description, example call, and JSON argument schema when available. This lookup works offline and identifies differences between the bundled Cloud and Enterprise API specifications.
+`tenant settings show` calls `getTenantDetails` for a Cloud profile. Run `datalens rpc` for general help. Use `datalens rpc ACTION --help` to look up an action's description, example call, and JSON argument schema when available. Help works offline and uses the installation type stored in the selected profile. Cloud profiles use the Cloud catalog. Standalone and Stackland profiles use the Enterprise catalog. The public binary has no bundled Yandex Team catalog. You can call an RPC action by name on any installation, including actions missing from its catalog.
 
 ```sh
 datalens rpc getWorkbook --help
 datalens rpc getTenantDetails --format=json
 datalens rpc getWorkbook --args '{"workbookId":"your-workbook-id"}' --format=json
 ```
+
+Every RPC request sends the API version embedded in the CLI in the `x-dl-api-version` header. Run `datalens version` to see which version your binary targets.
 
 To call an action, pass its name and optionally supply a JSON object with `--args` (default `{}`). API responses retain the server's JSON structure, indented for reading or compact with `--format=json`. The caller is responsible for the effects of the requested action.
 
@@ -81,12 +83,12 @@ datalens profiles activate team
 | `https://datalens.yandex-team.ru` | `https://api.datalens.yandex.net` | `yateam` |
 | Custom, e.g. `https://example.com/datalens` | `https://example.com/datalens/api` | Supply `--installation-type` |
 
-The known installations can also be selected by type alone. A custom UI endpoint requires an explicit type. Endpoints use HTTPS. Yandex Team accepts an OAuth token. Cloud, standalone, and Stackland use bearer tokens appropriate to their installation. Only Cloud requests use an organization ID. Save it at creation with `--organization=ID`, change it with `datalens profiles update NAME --organization=ID`, or supply `DATALENS_ORG_ID` when the selected Cloud profile omits it. `--api-version` on profile creation overrides the default request version, `3`.
+The known installations can also be selected by type alone. A custom UI endpoint requires an explicit type. Endpoints use HTTPS. Yandex Team accepts an OAuth token. Cloud, standalone, and Stackland use bearer tokens appropriate to their installation. Only Cloud requests use an organization ID. Save it at creation with `--organization=ID`, change it with `datalens profiles update NAME --organization=ID`, or supply `DATALENS_ORG_ID` when the selected Cloud profile omits it.
 
 Use `--profile=NAME` for a single command, or set `DATALENS_PROFILE` for a shell session. Selection order is the flag, the environment variable, the active profile, then `default`. Creating a named profile leaves the active selection in place.
 
 ```sh
-datalens tenant settings show --profile=corp
+datalens rpc getWorkbook --help --profile=corp
 datalens profiles delete corp
 # In scripts
 datalens profiles delete corp --confirm=yes

@@ -16,6 +16,21 @@ type Store struct{ Dir string }
 
 const maxConfigSize = 1024 * 1024
 
+func (p *Profile) UnmarshalJSON(data []byte) error {
+	type fields Profile
+	var stored struct {
+		fields
+		LegacyAPIVersion string `json:"apiVersion"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&stored); err != nil {
+		return err
+	}
+	*p = Profile(stored.fields)
+	return nil
+}
+
 func emptyDocument() Document {
 	return Document{Version: SchemaVersion, Profiles: map[string]Profile{}}
 }

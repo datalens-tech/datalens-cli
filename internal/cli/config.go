@@ -47,7 +47,6 @@ func (a *app) createProfileCommand() *cobra.Command {
 	flags.StringVar(&profile.Endpoint, "endpoint", "", "DataLens UI endpoint")
 	flags.StringVar(&profile.APIEndpoint, "api-endpoint", "", "Override the API endpoint derived from the UI endpoint")
 	flags.StringVar(&profile.OrganizationID, "organization", "", "Cloud organization ID")
-	flags.StringVar(&profile.APIVersion, "api-version", "", "API version for this profile")
 	return cmd
 }
 

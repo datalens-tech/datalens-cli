@@ -62,14 +62,10 @@ func Call(ctx context.Context, transport http.RoundTripper, profile config.Profi
 	case "yateam":
 		scheme = "OAuth"
 	}
-	version := profile.APIVersion
-	if version == "" {
-		version = "3"
-	}
 	req.Header.Set("Authorization", scheme+" "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("x-dl-api-version", version)
+	req.Header.Set("x-dl-api-version", buildinfo.APIVersion)
 	req.Header.Set("User-Agent", "datalens-cli/"+buildinfo.Version)
 	client := http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)

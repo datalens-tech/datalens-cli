@@ -91,7 +91,7 @@ func TestResolvePrecedenceAndNoFallback(t *testing.T) {
 	_, _, err = Resolve(doc, "", "missing")
 	requireCode(t, err, "PROFILE_NOT_FOUND")
 	name, profile, err := Resolve(emptyDocument(), "", "")
-	if err != nil || name != defaultName || profile != (Profile{Installation: "cloud", Endpoint: cloudUI, APIEndpoint: cloudAPI}) {
+	if err != nil || name != defaultName || !reflect.DeepEqual(profile, Profile{Installation: "cloud", Endpoint: cloudUI, APIEndpoint: cloudAPI}) {
 		t.Fatalf("implicit selection = %q, %+v, %v", name, profile, err)
 	}
 }
@@ -114,6 +114,9 @@ func TestNormalizeProfile(t *testing.T) {
 		{Installation: "onpremise-standalone"}, {Installation: "stackland"},
 		{Installation: "yateam", OrganizationID: "org"},
 		{Installation: "cloud", OrganizationID: "org\r\nheader: value"},
+		{TokenCommand: []string{}}, {TokenCommand: []string{"", "iam"}}, {TokenCommand: []string{"  "}},
+		{TokenCommand: []string{"yc", "arg\x00here"}}, {TokenCommand: []string{"yc", "line\nbreak"}},
+		{TokenCommand: []string{"\xff"}},
 	} {
 		_, err := NormalizeProfile(p)
 		requireCode(t, err, "PROFILE_INVALID")

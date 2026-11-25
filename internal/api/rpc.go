@@ -56,7 +56,7 @@ func Call(ctx context.Context, transport http.RoundTripper, profile config.Profi
 	switch profile.Installation {
 	case "cloud":
 		if profile.OrganizationID == "" {
-			return nil, &output.Error{Code: "ORGANIZATION_REQUIRED", Message: "Set DATALENS_ORG_ID or run datalens profiles update NAME --organization=ID for the selected Cloud profile.", ExitCode: 2}
+			return nil, &output.Error{Code: "ORGANIZATION_REQUIRED", Message: "Set DATALENS_ORG_ID or specify --organization=ID when creating a Cloud profile.", ExitCode: 2}
 		}
 		req.Header.Set("x-dl-org-id", profile.OrganizationID)
 	case "yateam":

@@ -70,6 +70,11 @@ def build(targets):
             pack(archive, [(binary, 0o755), (Path("LICENSE"), 0o644), (Path("NOTICES"), 0o644)])
             checksums.append(f"{digest(archive)}  {archive.name}\n")
 
+        installer = assets / "install.sh"
+        shutil.copyfile("install.sh", installer)
+        installer.chmod(0o755)
+        checksums.append(f"{digest(installer)}  {installer.name}\n")
+
         manifest = assets / "SHA256SUMS"
         manifest.write_bytes("".join(checksums).encode("ascii"))
         try:

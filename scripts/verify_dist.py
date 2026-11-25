@@ -19,11 +19,14 @@ def verify(targets):
         system, arch = target.split("/")
         suffix = "zip" if system == "windows" else "tar.gz"
         archives[f"datalens_{version}_{system}_{arch}.{suffix}"] = (system, arch)
-    if {p.name for p in directory.iterdir()} != set(archives) | {"SHA256SUMS"}:
+    assets = set(archives) | {"install.sh"}
+    if {p.name for p in directory.iterdir()} != assets | {"SHA256SUMS"}:
         sys.exit("unexpected distribution files")
-    manifest = "".join(f"{digest(directory / name)}  {name}\n" for name in sorted(archives))
+    if (directory / "install.sh").read_bytes() != Path("install.sh").read_bytes():
+        sys.exit("incorrect installer in distribution")
+    manifest = "".join(f"{digest(directory / name)}  {name}\n" for name in sorted(assets))
     if (directory / "SHA256SUMS").read_bytes() != manifest.encode("ascii"):
-        sys.exit("SHA256SUMS does not match the archives")
+        sys.exit("SHA256SUMS does not match the distribution files")
 
     with tempfile.TemporaryDirectory() as staging:
         for name, (system, arch) in archives.items():

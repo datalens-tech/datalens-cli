@@ -22,6 +22,7 @@ jobs:
       - run: test -z "$(gofmt -l cmd internal)"
       - run: go vet ./...
       - run: go test -race ./...
+      - run: python3 -B scripts/test_install.py
   distribution:
     runs-on: ubuntu-latest
     steps:

@@ -180,7 +180,7 @@ func (a *app) root() *cobra.Command {
 		RunE:              showHelp,
 	}
 	flags := root.PersistentFlags()
-	flags.StringVar(&a.profile, "profile", "", "Select a named profile")
+	flags.StringVar(&a.profile, "profile", "", "Select a profile for RPC, schemas, tenant settings, or profiles list")
 	flags.StringVar(&a.authToken, "auth-token", "", "Use this token for the current API request")
 	flags.StringVar(&a.format, "format", "text", "Output format: text or json")
 	flags.DurationVar(&a.timeout, "timeout", 30*time.Second, "Command timeout")
@@ -189,7 +189,7 @@ func (a *app) root() *cobra.Command {
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, _ error) error {
 		return usageError("invalid flag or value; see " + cmd.CommandPath() + " --help")
 	})
-	root.AddCommand(a.versionCommand(), a.profilesCommand(), a.rpcCommand(), a.tenantCommand())
+	root.AddCommand(a.versionCommand(), a.profilesCommand(), a.rpcCommand(), a.schemaCommand(), a.tenantCommand(), a.cowCommand())
 	root.InitDefaultHelpCmd()
 	help, _, _ := root.Find([]string{"help"})
 	help.Args = func(cmd *cobra.Command, args []string) error {

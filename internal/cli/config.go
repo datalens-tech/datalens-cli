@@ -18,22 +18,33 @@ func (a *app) profilesCommand() *cobra.Command {
 		Use: "profiles", Short: "Manage installation profiles", Args: groupArgs,
 		RunE: showHelp,
 	}
-	cmd.AddCommand(a.createProfileCommand(), a.updateProfileCommand(), a.listProfilesCommand(), a.activateProfileCommand(), a.deleteProfileCommand())
+	cmd.AddCommand(a.createProfileCommand(), a.listProfilesCommand(), a.activateProfileCommand(), a.deleteProfileCommand())
 	return cmd
 }
 
+func profileNameArg(cmd *cobra.Command, args []string) error {
+	if cmd.Flags().Changed("profile") {
+		return usageError("Pass the profile name as a positional argument and omit --profile.")
+	}
+	return exactArgs(1)(cmd, args)
+}
+
 func (a *app) createProfileCommand() *cobra.Command {
-	var name string
 	var profile config.Profile
+	var tokenCommand string
 	cmd := &cobra.Command{
-		Use: "create --name=NAME", Short: "Create an installation profile", Args: exactArgs(0),
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if name == "" {
-				return usageError("--name is required")
-			}
+		Use: "create NAME", Short: "Create an installation profile", Args: profileNameArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
 			store, err := a.store()
 			if err != nil {
 				return err
+			}
+			if cmd.Flags().Changed("token-cmd") {
+				profile.TokenCommand, err = splitTokenCommand(tokenCommand)
+				if err != nil {
+					return err
+				}
 			}
 			if err := store.Create(cmd.Context(), name, profile); err != nil {
 				return err
@@ -42,39 +53,45 @@ func (a *app) createProfileCommand() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&name, "name", "", "Profile name (required)")
 	flags.StringVar(&profile.Installation, "installation-type", "", "Installation type: cloud, yateam, onpremise-standalone, or stackland")
 	flags.StringVar(&profile.Endpoint, "endpoint", "", "DataLens UI endpoint")
 	flags.StringVar(&profile.APIEndpoint, "api-endpoint", "", "Override the API endpoint derived from the UI endpoint")
 	flags.StringVar(&profile.OrganizationID, "organization", "", "Cloud organization ID")
+	flags.StringVar(&tokenCommand, "token-cmd", "", "Run a program directly to obtain the token (quote arguments containing spaces)")
 	return cmd
+}
+
+func splitTokenCommand(command string) ([]string, error) {
+	args := []string{}
+	for len(command) > 0 {
+		command = strings.TrimLeft(command, " \t")
+		if command == "" {
+			break
+		}
+		var arg strings.Builder
+		for len(command) > 0 && command[0] != ' ' && command[0] != '\t' {
+			quote := command[0]
+			if quote != '\'' && quote != '"' {
+				arg.WriteByte(quote)
+				command = command[1:]
+				continue
+			}
+			command = command[1:]
+			end := strings.IndexByte(command, quote)
+			if end < 0 {
+				return nil, usageError("Unclosed quote in --token-cmd.")
+			}
+			arg.WriteString(command[:end])
+			command = command[end+1:]
+		}
+		args = append(args, arg.String())
+	}
+	return args, nil
 }
 
 type profileSummary struct {
 	Name string `json:"name"`
 	config.Profile
-}
-
-func (a *app) updateProfileCommand() *cobra.Command {
-	var organization string
-	cmd := &cobra.Command{
-		Use: "update NAME --organization=ID", Short: "Set the organization of a Cloud profile", Args: exactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if strings.TrimSpace(organization) == "" {
-				return usageError("--organization requires an organization ID")
-			}
-			store, err := a.store()
-			if err != nil {
-				return err
-			}
-			if err := store.SetOrganization(cmd.Context(), args[0], organization); err != nil {
-				return err
-			}
-			return a.writer.Result(map[string]string{"name": args[0]}, fmt.Sprintf("Updated profile %s.\n", args[0]))
-		},
-	}
-	cmd.Flags().StringVar(&organization, "organization", "", "Cloud organization ID (required)")
-	return cmd
 }
 
 func (a *app) listProfilesCommand() *cobra.Command {
@@ -116,7 +133,7 @@ func (a *app) listProfilesCommand() *cobra.Command {
 
 func (a *app) activateProfileCommand() *cobra.Command {
 	return &cobra.Command{
-		Use: "activate NAME", Short: "Use a profile by default", Args: exactArgs(1),
+		Use: "activate NAME", Short: "Use a profile by default", Args: profileNameArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := a.store()
 			if err != nil {
@@ -133,7 +150,7 @@ func (a *app) activateProfileCommand() *cobra.Command {
 func (a *app) deleteProfileCommand() *cobra.Command {
 	var confirm string
 	cmd := &cobra.Command{
-		Use: "delete NAME", Short: "Delete a local profile", Args: exactArgs(1),
+		Use: "delete NAME", Short: "Delete a local profile", Args: profileNameArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("confirm") {
 				if confirm != "yes" {

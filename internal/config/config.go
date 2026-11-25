@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const SchemaVersion = 2
@@ -19,10 +21,11 @@ const (
 )
 
 type Profile struct {
-	Installation   string `json:"installationType"`
-	Endpoint       string `json:"endpoint"`
-	APIEndpoint    string `json:"apiEndpoint"`
-	OrganizationID string `json:"organizationId,omitempty"`
+	Installation   string   `json:"installationType"`
+	Endpoint       string   `json:"endpoint"`
+	APIEndpoint    string   `json:"apiEndpoint"`
+	OrganizationID string   `json:"organizationId,omitempty"`
+	TokenCommand   []string `json:"tokenCommand,omitempty"`
 }
 
 type Document struct {
@@ -49,6 +52,14 @@ func validName(name string) bool {
 }
 
 func NormalizeProfile(p Profile) (Profile, error) {
+	if p.TokenCommand != nil && (len(p.TokenCommand) == 0 || strings.TrimSpace(p.TokenCommand[0]) == "") {
+		return Profile{}, failure("PROFILE_INVALID", "The token command requires an executable.")
+	}
+	for _, arg := range p.TokenCommand {
+		if !utf8.ValidString(arg) || strings.ContainsFunc(arg, unicode.IsControl) {
+			return Profile{}, failure("PROFILE_INVALID", "Token command arguments must be valid UTF-8 without control characters.")
+		}
+	}
 	if strings.ContainsFunc(p.OrganizationID, func(r rune) bool { return r < 32 || r == 127 }) {
 		return Profile{}, failure("PROFILE_INVALID", "Profile settings must not contain control characters.")
 	}

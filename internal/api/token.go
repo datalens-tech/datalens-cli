@@ -1,23 +1,33 @@
 package api
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/datalens-tech/datalens-cli/internal/output"
 )
 
-func ResolveToken(explicit *string, lookupEnv func(string) string) (string, error) {
+const maxTokenSize = 64 << 10
+
+func ResolveToken(ctx context.Context, explicit *string, tokenCommand []string, lookupEnv func(string) string) (string, error) {
 	if explicit != nil {
 		return validateToken(*explicit)
+	}
+	if len(tokenCommand) > 0 {
+		return runTokenCommand(ctx, tokenCommand)
 	}
 	if token := lookupEnv("DATALENS_TOKEN"); token != "" {
 		return validateToken(token)
 	}
 	path := lookupEnv("DATALENS_TOKEN_PATH")
 	if path == "" {
-		return "", &output.Error{Code: "AUTH_TOKEN_REQUIRED", Message: "Provide a token with --auth-token, DATALENS_TOKEN, or DATALENS_TOKEN_PATH.", ExitCode: 3}
+		return "", &output.Error{Code: "AUTH_TOKEN_REQUIRED", Message: "Provide a token with --auth-token, a profile token command, DATALENS_TOKEN, or DATALENS_TOKEN_PATH.", ExitCode: 3}
 	}
 	unreadable := &output.Error{Code: "AUTH_TOKEN_FILE_INVALID", Message: "DATALENS_TOKEN_PATH must point to a readable, regular token file.", ExitCode: 2}
 	info, err := os.Stat(path)
@@ -29,13 +39,53 @@ func ResolveToken(explicit *string, lookupEnv func(string) string) (string, erro
 		return "", unreadable
 	}
 	defer file.Close()
-	const maxTokenFileSize = 64 << 10
-	data, err := io.ReadAll(io.LimitReader(file, maxTokenFileSize+1))
-	if err != nil || len(data) > maxTokenFileSize {
+	data, err := io.ReadAll(io.LimitReader(file, maxTokenSize+1))
+	if err != nil || len(data) > maxTokenSize {
 		return "", unreadable
 	}
 	token := strings.TrimSuffix(string(data), "\n")
 	return validateToken(strings.TrimSuffix(token, "\r"))
+}
+
+func runTokenCommand(ctx context.Context, argv []string) (string, error) {
+	var stdout tokenCommandOutput
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Stdout = &stdout
+	// A helper can exit while its descendants still hold stdout open.
+	cmd.WaitDelay = 100 * time.Millisecond
+	err := cmd.Run()
+	if cause := context.Cause(ctx); cause != nil {
+		return "", cause
+	}
+	if stdout.oversized {
+		return "", &output.Error{Code: "AUTH_TOKEN_INVALID", Message: "The profile token command output exceeds 64 KiB.", ExitCode: 3}
+	}
+	if err != nil {
+		message := "Could not get a token from the profile command. Check that it runs successfully."
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			message = fmt.Sprintf("The profile token command failed (exit code %d).", exitError.ExitCode())
+		}
+		return "", &output.Error{Code: "AUTH_TOKEN_COMMAND_FAILED", Message: message, ExitCode: 3}
+	}
+	token := stdout.data.String()
+	if line, ok := strings.CutSuffix(token, "\n"); ok {
+		token = strings.TrimSuffix(line, "\r")
+	}
+	return validateToken(token)
+}
+
+type tokenCommandOutput struct {
+	data      strings.Builder
+	oversized bool
+}
+
+func (w *tokenCommandOutput) Write(p []byte) (int, error) {
+	if len(p) > maxTokenSize-w.data.Len() {
+		w.oversized = true
+		return 0, io.ErrShortBuffer
+	}
+	return w.data.Write(p)
 }
 
 func validateToken(token string) (string, error) {

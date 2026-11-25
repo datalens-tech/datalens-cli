@@ -18,6 +18,75 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
+func TestProfileTokenHelper(t *testing.T) {
+	marker := os.Getenv("DATALENS_TEST_HELPER_MARKER")
+	if marker == "" {
+		return
+	}
+	if err := os.WriteFile(marker, []byte("called"), 0600); err != nil {
+		os.Exit(2)
+	}
+	_, _ = io.WriteString(os.Stdout, "from-helper\n")
+	os.Exit(0)
+}
+
+func TestRPCRunsOnlySelectedTokenCommand(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "called")
+	t.Setenv("DATALENS_TEST_HELPER_MARKER", marker)
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := testOptions(map[string]string{
+		"DATALENS_CONFIG_DIR": filepath.Join(dir, "config"), "DATALENS_TOKEN": "from-env", "DATALENS_ORG_ID": "org",
+	})
+	wantToken := ""
+	requests := 0
+	options.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if req.Header.Get("Authorization") != "Bearer "+wantToken {
+			t.Error("request used the wrong token source")
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+	})
+	run := func(args ...string) {
+		t.Helper()
+		result := execute(t.Context(), options, args...)
+		if result.code != 0 || result.stderr != "" {
+			t.Fatalf("%v: %#v", args, result)
+		}
+	}
+	run("profiles", "create", "work", "--installation-type=cloud", `--token-cmd="`+executable+`" -test.run=^TestProfileTokenHelper$`)
+	run("profiles", "activate", "work")
+	run("profiles", "list")
+	run("rpc", "getWorkbook", "--help")
+	run("schema", "show", "getWorkbook")
+	run("version")
+	wantToken = "from-env"
+	run("rpc", "getTenantDetails", "--profile=default")
+	wantToken = "from-flag"
+	run("tenant", "settings", "show", "--auth-token=from-flag")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("helper ran before it was needed: %v", err)
+	}
+	wantToken = "from-helper"
+	run("tenant", "settings", "show")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "config", "config.json"))
+	if err != nil || strings.Contains(string(data), wantToken) {
+		t.Fatalf("profile must not store the returned token: %v", err)
+	}
+	run("profiles", "create", "broken", "--installation-type=cloud", "--token-cmd=datalens-missing-test-helper")
+	result := execute(t.Context(), options, "rpc", "getTenantDetails", "--profile=broken", "--format=json")
+	assertFailure(t, result, 3, "AUTH_TOKEN_COMMAND_FAILED")
+	if requests != 3 {
+		t.Errorf("got %d API requests, want 3", requests)
+	}
+}
+
 func TestFirstCloudRequestWithoutSetup(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "config")
 	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": dir, "DATALENS_TOKEN": "test-token", "DATALENS_ORG_ID": "org"})
@@ -143,7 +212,7 @@ func TestRPCActionHelp(t *testing.T) {
 		{
 			action: "getWorkbook", flag: "--help",
 			want: []string{"Returns the specified workbook.", "Example:", "datalens rpc getWorkbook --args",
-				"Arguments schema:", `"includePermissionsInfo"`, `"required"`, `"workbookId"`},
+				"Required: workbookId", "includePermissionsInfo", "datalens schema show getWorkbook"},
 		},
 		{
 			action: "getTenantDetails", flag: "-h",
@@ -186,10 +255,10 @@ func TestRPCActionHelpSelectsInstallation(t *testing.T) {
 	env := map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")}
 	options := testOptions(env)
 	for _, args := range [][]string{
-		{"profiles", "create", "--name=team", "--installation-type=cloud"},
-		{"profiles", "create", "--name=work", "--installation-type=onpremise-standalone", "--endpoint=https://work.example"},
-		{"profiles", "create", "--name=internal", "--installation-type=yateam"},
-		{"profiles", "create", "--name=stack", "--installation-type=stackland", "--endpoint=https://stack.example"},
+		{"profiles", "create", "team", "--installation-type=cloud"},
+		{"profiles", "create", "work", "--installation-type=onpremise-standalone", "--endpoint=https://work.example"},
+		{"profiles", "create", "internal", "--installation-type=yateam"},
+		{"profiles", "create", "stack", "--installation-type=stackland", "--endpoint=https://stack.example"},
 		{"profiles", "activate", "work"},
 	} {
 		if result := execute(t.Context(), options, args...); result.code != 0 {
@@ -208,7 +277,7 @@ func TestRPCActionHelpSelectsInstallation(t *testing.T) {
 		{"environment", "team", "", "specified common object", []string{"Enterprise API reference", "specified shared entry"}},
 		{"explicit", "team", "--profile=work", "specified shared entry", []string{"Cloud API reference", "specified common object"}},
 		{"stackland", "", "--profile=stack", "specified shared entry", []string{"Cloud API reference", "specified common object"}},
-		{"yateam", "", "--profile=internal", "No bundled documentation for Yandex Team", []string{"Cloud API reference", "Enterprise API reference", "specified common object", "specified shared entry", "Arguments schema:"}},
+		{"yateam", "", "--profile=internal", "Yandex Team API reference", []string{"Cloud API reference", "Enterprise API reference"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env["DATALENS_PROFILE"] = tc.envProfile
@@ -231,11 +300,38 @@ func TestRPCActionHelpSelectsInstallation(t *testing.T) {
 	assertFailure(t, result, 2, "PROFILE_NOT_FOUND")
 }
 
+func TestSchemaShowUsesProfileAndWritesOnlyJSON(t *testing.T) {
+	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
+	options.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("schema lookup contacted the API")
+		return nil, nil
+	})
+	created := execute(t.Context(), options, "profiles", "create", "work", "--installation-type=yateam")
+	if created.code != 0 {
+		t.Fatalf("create: %#v", created)
+	}
+	for _, flags := range [][]string{nil, {"--format=json", "--debug"}} {
+		args := append([]string{"schema", "show", "updateEditorChartSecrets", "--profile=work"}, flags...)
+		result := execute(t.Context(), options, args...)
+		if result.code != 0 {
+			t.Fatalf("schema show: %#v", result)
+		}
+		schema := document(t, result.stdout)
+		if schema["properties"] == nil || schema["$defs"] == nil || schema["diagnostics"] != nil {
+			t.Fatalf("expected an argument schema with referenced definitions: %v", schema)
+		}
+	}
+	for action, code := range map[string]string{"updateEditorChartSecrets": "RPC_ACTION_UNDOCUMENTED", "getTenantDetails": "RPC_SCHEMA_UNAVAILABLE"} {
+		result := execute(t.Context(), options, "schema", "show", action, "--format=json")
+		assertFailure(t, result, 2, code)
+	}
+}
+
 func TestTenantSettingsRequiresCloudProfile(t *testing.T) {
 	env := map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")}
 	options := testOptions(env)
 	for _, installation := range []string{"yateam", "onpremise-standalone", "stackland"} {
-		args := []string{"profiles", "create", "--name=" + installation, "--installation-type=" + installation, "--endpoint=https://service.example"}
+		args := []string{"profiles", "create", installation, "--installation-type=" + installation, "--endpoint=https://service.example"}
 		if result := execute(t.Context(), options, args...); result.code != 0 {
 			t.Fatalf("create: %#v", result)
 		}

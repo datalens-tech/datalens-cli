@@ -162,25 +162,6 @@ func (s Store) Use(ctx context.Context, name string) error {
 	})
 }
 
-func (s Store) SetOrganization(ctx context.Context, name, organization string) error {
-	if !validName(name) {
-		return failure("PROFILE_INVALID", "A valid profile name is required.")
-	}
-	return s.mutate(ctx, func(doc *Document) error {
-		_, profile, err := Resolve(*doc, name, "")
-		if err != nil {
-			return err
-		}
-		profile.OrganizationID = organization
-		profile, err = NormalizeProfile(profile)
-		if err != nil {
-			return err
-		}
-		doc.Profiles[name] = profile
-		return nil
-	})
-}
-
 func (s Store) Delete(ctx context.Context, name string) error {
 	if !validName(name) {
 		return failure("PROFILE_INVALID", "A valid profile name is required.")

@@ -102,7 +102,7 @@ func TestProfileLifecycleAndSelection(t *testing.T) {
 		t.Fatalf("listing implicit default created config directory: %v", err)
 	}
 	for _, name := range []string{"saved", "environment", "explicit"} {
-		created := run("profiles", "create", "--name", name, "--installation-type", "yateam")
+		created := run("profiles", "create", name, "--installation-type", "yateam")
 		if created["name"] != name {
 			t.Fatalf("created: %#v", created)
 		}
@@ -159,9 +159,28 @@ func TestProfileLifecycleAndSelection(t *testing.T) {
 	}
 }
 
+func TestProfileMutationsRejectExplicitSelector(t *testing.T) {
+	options := testOptions(nil)
+	options.UserConfigDir = func() (string, error) {
+		t.Fatal("conflicting profile arguments accessed configuration")
+		return "", nil
+	}
+	options.IsTerminal = func(io.Reader) bool { return true }
+	for _, args := range [][]string{
+		{"--profile=other", "profiles", "create", "work"},
+		{"profiles", "--profile=work", "activate", "work"},
+		{"profiles", "delete", "work", "--profile=other"},
+	} {
+		result := execute(t.Context(), options, args...)
+		if result.code != 2 || result.stdout != "" || !strings.Contains(result.stderr, "omit --profile") || strings.Contains(result.stderr, "[y/N]") {
+			t.Errorf("%v: %#v", args, result)
+		}
+	}
+}
+
 func TestCustomProfileEndpoints(t *testing.T) {
 	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
-	args := []string{"profiles", "create", "--name=corp", "--endpoint=https://corp.example.com", "--format=json"}
+	args := []string{"profiles", "create", "corp", "--endpoint=https://corp.example.com", "--format=json"}
 	assertFailure(t, execute(context.Background(), options, args...), 2, "PROFILE_INVALID")
 	args = append(args, "--installation-type=onpremise-standalone", "--api-endpoint=https://rpc.example.com/dl")
 	if result := execute(context.Background(), options, args...); result.code != 0 {
@@ -183,8 +202,8 @@ func TestProfileCreatePersistsOnlyExplicitOrganization(t *testing.T) {
 		"DATALENS_ORG_ID":     "environment-org",
 	})
 	for _, args := range [][]string{
-		{"profiles", "create", "--name=work", "--installation-type=cloud"},
-		{"profiles", "create", "--name=other", "--organization=explicit-org", "--endpoint=https://datalens.ru"},
+		{"profiles", "create", "work", "--installation-type=cloud"},
+		{"profiles", "create", "other", "--organization=explicit-org", "--endpoint=https://datalens.ru"},
 	} {
 		if result := execute(context.Background(), options, args...); result.code != 0 {
 			t.Fatalf("create failed: %#v", result)
@@ -200,7 +219,7 @@ func TestProfileCreatePersistsOnlyExplicitOrganization(t *testing.T) {
 	}
 }
 
-func TestProfileUpdateOrganization(t *testing.T) {
+func TestRecreateCloudProfileWithNewOrganization(t *testing.T) {
 	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
 	run := func(args ...string) map[string]any {
 		t.Helper()
@@ -210,32 +229,25 @@ func TestProfileUpdateOrganization(t *testing.T) {
 		}
 		return document(t, result.stdout)
 	}
-	run("profiles", "create", "--name=work", "--installation-type=cloud", "--endpoint=https://work.example.com",
-		"--api-endpoint=https://rpc.example.com/custom", "--organization=old-org")
-	run("profiles", "create", "--name=team", "--installation-type=yateam")
-	run("profiles", "activate", "team")
-	want := run("profiles", "list")
-	run("profiles", "update", "work", "--organization=new-org")
-	run("profiles", "update", "default", "--organization=default-org")
-	assertFailure(t, execute(t.Context(), options, "profiles", "update", "missing", "--organization=x", "--format=json"), 2, "PROFILE_NOT_FOUND")
-	assertFailure(t, execute(t.Context(), options, "profiles", "update", "team", "--organization=x", "--format=json"), 2, "PROFILE_INVALID")
-	for _, value := range want["profiles"].([]any) {
-		profile := value.(map[string]any)
-		switch profile["name"] {
-		case "work":
-			profile["organizationId"] = "new-org"
-		case "default":
-			profile["organizationId"] = "default-org"
-		}
+	run("profiles", "create", "work", "--installation-type=cloud", "--organization=old-org")
+	before := run("profiles", "list")
+	assertFailure(t, execute(t.Context(), options, "profiles", "update", "work", "--organization=new-org", "--format=json"), 2, "INVALID_USAGE")
+	assertFailure(t, execute(t.Context(), options, "profiles", "create", "work", "--organization=new-org", "--format=json"), 2, "PROFILE_EXISTS")
+	if got := run("profiles", "list"); !reflect.DeepEqual(got, before) {
+		t.Fatalf("existing profile changed: %#v", got)
 	}
-	if got := run("profiles", "list"); !reflect.DeepEqual(got, want) {
-		t.Fatalf("profiles after update = %#v, want %#v", got, want)
+	run("profiles", "delete", "work", "--confirm=yes")
+	run("profiles", "create", "work", "--installation-type=cloud", "--organization=new-org")
+	profiles := run("profiles", "list")["profiles"].([]any)
+	work := profiles[1].(map[string]any)
+	if work["name"] != "work" || work["organizationId"] != "new-org" {
+		t.Fatalf("recreated profile: %#v", work)
 	}
 }
 
 func TestProfileDeleteConfirmation(t *testing.T) {
 	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
-	result := execute(context.Background(), options, "profiles", "create", "--name=work", "--installation-type=yateam")
+	result := execute(context.Background(), options, "profiles", "create", "work", "--installation-type=yateam")
 	if result.code != 0 {
 		t.Fatalf("create: %#v", result)
 	}
@@ -262,7 +274,7 @@ func TestProfileDeleteConfirmation(t *testing.T) {
 
 func TestProfileDeletePromptTimesOut(t *testing.T) {
 	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
-	if result := execute(context.Background(), options, "profiles", "create", "--name=work"); result.code != 0 {
+	if result := execute(context.Background(), options, "profiles", "create", "work"); result.code != 0 {
 		t.Fatalf("create: %#v", result)
 	}
 	reader, writer := io.Pipe()
@@ -284,7 +296,9 @@ func TestUsageFailuresAreJSONOnStderr(t *testing.T) {
 		{"missing", "--format", "json"},
 		{"profiles", "missing", "--format", "json"},
 		{"version", "extra", "--format", "json"},
-		{"profiles", "create", "--name=work", "--api-version=4", "--format=json"},
+		{"profiles", "create", "work", "--api-version=4", "--format=json"},
+		{"profiles", "create", "--name=work", "--format=json"},
+		{"profiles", "create", "first", "second", "--format=json"},
 		{"version", "--unknown", "--format", "json"},
 		{"profiles", "create", "--format", "json"},
 		{"profiles", "list", "extra", "--format", "json"},

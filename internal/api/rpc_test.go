@@ -27,14 +27,14 @@ func TestResolveToken(t *testing.T) {
 	explicit := "from-flag"
 	check := func(flag *string, want string) {
 		t.Helper()
-		got, err := ResolveToken(flag, lookup)
+		got, err := ResolveToken(t.Context(), flag, nil, lookup)
 		if err != nil || got != want {
 			t.Fatalf("got %q, %v; want %q", got, err, want)
 		}
 	}
 	check(&explicit, "from-flag")
 	explicit = ""
-	_, err := ResolveToken(&explicit, lookup)
+	_, err := ResolveToken(t.Context(), &explicit, nil, lookup)
 	requireCode(t, err, "AUTH_TOKEN_INVALID", 3)
 	check(nil, "from-env")
 	delete(env, "DATALENS_TOKEN")
@@ -42,13 +42,13 @@ func TestResolveToken(t *testing.T) {
 	if err := os.WriteFile(path, []byte("first\nsecond\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = ResolveToken(nil, lookup)
+	_, err = ResolveToken(t.Context(), nil, nil, lookup)
 	requireCode(t, err, "AUTH_TOKEN_INVALID", 3)
 	env["DATALENS_TOKEN_PATH"] = filepath.Dir(path)
-	_, err = ResolveToken(nil, lookup)
+	_, err = ResolveToken(t.Context(), nil, nil, lookup)
 	requireCode(t, err, "AUTH_TOKEN_FILE_INVALID", 2)
 	delete(env, "DATALENS_TOKEN_PATH")
-	_, err = ResolveToken(nil, lookup)
+	_, err = ResolveToken(t.Context(), nil, nil, lookup)
 	requireCode(t, err, "AUTH_TOKEN_REQUIRED", 3)
 }
 

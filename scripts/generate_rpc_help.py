@@ -121,8 +121,9 @@ def write_catalog(data, path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate offline RPC help from the public datalens-tech/datalens-sdk OpenAPI snapshots.")
+    parser = argparse.ArgumentParser(description="Generate offline RPC help from DataLens SDK OpenAPI snapshots.")
     parser.add_argument("spec_dir", type=Path, help="datalens-sdk/spec directory")
+    parser.add_argument("--yateam-spec", type=Path, help="also refresh the Yandex Team catalog from this SDK OpenAPI snapshot")
     args = parser.parse_args()
     source = (INTERNAL_DIR / "buildinfo" / "buildinfo.go").read_text(encoding="utf-8")
     match = re.search(r'^const APIVersion = "([0-9]+)"$', source, re.MULTILINE)
@@ -130,11 +131,14 @@ def main():
         parser.error("cannot read the pinned API version from buildinfo.go")
     expected_version = match.group(1)
     catalogs = {}
-    for edition, filename in [("cloud", "yacloud.json"), ("enterprise", "enterprise.json")]:
-        spec = json.loads((args.spec_dir / filename).read_text(encoding="utf-8"))
+    sources = {"cloud": args.spec_dir / "yacloud.json", "enterprise": args.spec_dir / "enterprise.json"}
+    if args.yateam_spec is not None:
+        sources["yateam"] = args.yateam_spec
+    for edition, path in sources.items():
+        spec = json.loads(path.read_text(encoding="utf-8"))
         version = spec.get("info", {}).get("version")
         if version != expected_version:
-            parser.error(f"{filename}: expected API version {expected_version!r}, got {version!r}")
+            parser.error(f"{path}: expected API version {expected_version!r}, got {version!r}")
         catalogs[edition] = catalog(spec)
     for edition, data in catalogs.items():
         write_catalog(data, CATALOG_DIR / f"{edition}.json")

@@ -16,7 +16,7 @@ func (a *app) rpcCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "rpc ACTION",
 		Short: "Call a DataLens RPC action",
-		Long:  "Call a DataLens RPC action by name and print its JSON response. Pass action parameters as a JSON object with --args, or omit --args to send {}. Use datalens rpc ACTION --help to look up an action's arguments.",
+		Long:  "Call a DataLens RPC action by name and print its JSON response. Pass action parameters as a JSON object with --args, or omit --args to send {}. Use datalens rpc ACTION --help for an argument summary or datalens schema show ACTION for the full JSON argument schema.",
 		Example: `  datalens rpc getTenantDetails
   datalens rpc getWorkbook --args '{"workbookId":"your-workbook-id"}'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -39,6 +39,28 @@ func (a *app) rpcCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&argsJSON, "args", "{}", "RPC arguments as a JSON object")
 	return command
+}
+
+func (a *app) schemaCommand() *cobra.Command {
+	schema := &cobra.Command{Use: "schema", Short: "Inspect bundled RPC argument schemas", Args: groupArgs, RunE: showHelp}
+	schema.AddCommand(&cobra.Command{
+		Use: "show ACTION", Short: "Print the full RPC argument schema as JSON", Args: exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := api.ValidateAction(args[0]); err != nil {
+				return err
+			}
+			profile, err := a.selectedProfile()
+			if err != nil {
+				return err
+			}
+			data, err := rpchelp.Schema(args[0], profile.Installation)
+			if err != nil {
+				return err
+			}
+			return a.writer.APIResult(data)
+		},
+	})
+	return schema
 }
 
 func (a *app) tenantCommand() *cobra.Command {
@@ -81,7 +103,7 @@ func (a *app) showRPCActionHelp(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return rpchelp.Write(cmd.OutOrStdout(), args[0], profile.Installation)
+	return rpchelp.Write(cmd.OutOrStdout(), args[0], profile.Installation, a.profile)
 }
 
 func (a *app) selectedProfile() (config.Profile, error) {
@@ -105,7 +127,7 @@ func (a *app) call(cmd *cobra.Command, profile config.Profile, action string, ar
 	if cmd.Flags().Changed("auth-token") {
 		explicitToken = &a.authToken
 	}
-	token, err := api.ResolveToken(explicitToken, a.options.LookupEnv)
+	token, err := api.ResolveToken(cmd.Context(), explicitToken, profile.TokenCommand, a.options.LookupEnv)
 	if err != nil {
 		return err
 	}

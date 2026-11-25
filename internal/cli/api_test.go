@@ -18,6 +18,27 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
+func TestRPCValidatesBeforeAuthentication(t *testing.T) {
+	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
+	created := execute(t.Context(), options, "profiles", "create", "team", "--installation-type=yateam", "--token-cmd=datalens-missing-test-helper")
+	if created.code != 0 {
+		t.Fatalf("create profile: %#v", created)
+	}
+	options.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("invalid request reached the API")
+		return nil, nil
+	})
+	for _, flags := range [][]string{nil, {`{"dashboardId":42}`}, {"--args", `{"dashboardId":42}`}} {
+		args := append([]string{"rpc", "getDashboard", "--profile=team", "--format=json"}, flags...)
+		result := execute(t.Context(), options, args...)
+		assertFailure(t, result, 2, "INVALID_USAGE")
+		msg := document(t, result.stderr)["error"].(map[string]any)["message"].(string)
+		if !strings.Contains(msg, `datalens rpc getDashboard '{"dashboardId":"your-dashboard-id"}' --profile=team`) {
+			t.Errorf("missing minimal invocation: %s", msg)
+		}
+	}
+}
+
 func TestProfileTokenHelper(t *testing.T) {
 	marker := os.Getenv("DATALENS_TEST_HELPER_MARKER")
 	if marker == "" {
@@ -58,13 +79,14 @@ func TestRPCRunsOnlySelectedTokenCommand(t *testing.T) {
 		}
 	}
 	run("profiles", "create", "work", "--installation-type=cloud", `--token-cmd="`+executable+`" -test.run=^TestProfileTokenHelper$`)
+	run("profiles", "create", "env", "--installation-type=cloud")
 	run("profiles", "activate", "work")
 	run("profiles", "list")
 	run("rpc", "getWorkbook", "--help")
 	run("schema", "show", "getWorkbook")
 	run("version")
 	wantToken = "from-env"
-	run("rpc", "getTenantDetails", "--profile=default")
+	run("rpc", "getTenantDetails", "--profile=env")
 	wantToken = "from-flag"
 	run("tenant", "settings", "show", "--auth-token=from-flag")
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
@@ -87,9 +109,44 @@ func TestRPCRunsOnlySelectedTokenCommand(t *testing.T) {
 	}
 }
 
-func TestFirstCloudRequestWithoutSetup(t *testing.T) {
+func createCloudProfile(t *testing.T, options cli.Options) {
+	t.Helper()
+	if result := execute(t.Context(), options, "profiles", "create", "cloud", "--installation-type=cloud"); result.code != 0 {
+		t.Fatalf("create Cloud profile: %#v", result)
+	}
+}
+
+func TestProfileRequiredBeforeFirstRequest(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "config")
 	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": dir, "DATALENS_TOKEN": "test-token", "DATALENS_ORG_ID": "org"})
+	options.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("request reached the API before a profile was created")
+		return nil, nil
+	})
+	for _, args := range [][]string{
+		{"rpc", "getTenantDetails"},
+		{"rpc", "getWorkbook", "--help"},
+		{"schema", "show", "getWorkbook"},
+		{"tenant", "settings", "show"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			result := execute(t.Context(), options, append(args, "--format=json")...)
+			assertFailure(t, result, 2, "NO_PROFILES")
+			message := document(t, result.stderr)["error"].(map[string]any)["message"].(string)
+			if !strings.Contains(message, "datalens setup") || !strings.Contains(message, "datalens profiles create") {
+				t.Fatalf("missing setup instructions: %s", message)
+			}
+		})
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("read-only command created configuration: %v", err)
+	}
+}
+
+func TestFirstRequestWithCloudProfile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "config")
+	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": dir, "DATALENS_TOKEN": "test-token", "DATALENS_ORG_ID": "org"})
+	createCloudProfile(t, options)
 	const payload = `{"tenantId":"demo","settings":{"limit":9007199254740993}}`
 	options.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(req.Body)
@@ -110,15 +167,13 @@ func TestFirstCloudRequestWithoutSetup(t *testing.T) {
 			t.Fatalf("args=%v: %#v", args, result)
 		}
 	}
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Fatalf("read-only command created configuration: %v", err)
-	}
 }
 
 func TestRPCWithLegacyProfileVersion(t *testing.T) {
+	const payload = `{"limit":9007199254740993, "name":"two words"}`
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		body, err := io.ReadAll(req.Body)
-		if err != nil || req.Method != "POST" || req.URL.Path != "/team/api/rpc/exampleAction" || string(body) != `{"limit":42}` {
+		if err != nil || req.Method != "POST" || req.URL.Path != "/team/api/rpc/exampleAction" || string(body) != payload {
 			t.Errorf("unexpected RPC request: %s %s %s (%v)", req.Method, req.URL.Path, body, err)
 		}
 		if req.Header.Get("Authorization") != "OAuth session-token" || req.Header.Get("x-dl-org-id") != "" || req.Header.Get("x-dl-api-version") != "3" {
@@ -137,12 +192,17 @@ func TestRPCWithLegacyProfileVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	options := testOptions(map[string]string{
-		"DATALENS_CONFIG_DIR": dir, "DATALENS_TOKEN": "unused-token", "DATALENS_ORG_ID": "unused-org",
+		"DATALENS_CONFIG_DIR": dir, "DATALENS_OAUTH_TOKEN": "session-token", "DATALENS_TOKEN": "unused-token", "DATALENS_ORG_ID": "unused-org",
 	})
 	options.Transport = server.Client().Transport
-	result := execute(context.Background(), options, "rpc", "exampleAction", "--args", `{"limit":42}`, "--profile=team", "--auth-token=session-token", "--format=json", "--debug")
-	if result.code != 0 || result.stdout != "[{\"diagnostics\":\"returned by API\"},9007199254740993]\n" || !strings.Contains(result.stderr, "datalens rpc") || strings.Contains(result.stderr, "session-token") {
-		t.Fatalf("RPC result: %#v", result)
+	for _, args := range [][]string{
+		{"rpc", "exampleAction", payload, "--profile=team"},
+		{"rpc", "exampleAction", "--profile=team", "--args", payload},
+	} {
+		result := execute(t.Context(), options, append(args, "--format=json", "--debug")...)
+		if result.code != 0 || result.stdout != "[{\"diagnostics\":\"returned by API\"},9007199254740993]\n" || !strings.Contains(result.stderr, "datalens rpc") || strings.Contains(result.stderr, "session-token") {
+			t.Fatalf("RPC result: %#v", result)
+		}
 	}
 }
 
@@ -160,7 +220,7 @@ func TestRPCInputAndOfflineHelp(t *testing.T) {
 		if result.code != 0 || result.stderr != "" {
 			t.Fatalf("help %v: %#v", args, result)
 		}
-		for _, text := range []string{"Usage:", "datalens rpc getTenantDetails", "datalens rpc getWorkbook --args", `"workbookId"`} {
+		for _, text := range []string{"Usage:", "datalens rpc getTenantDetails", "datalens rpc getWorkbook '{", `"workbookId"`} {
 			if !strings.Contains(result.stdout, text) {
 				t.Errorf("help %v is missing %q: %s", args, text, result.stdout)
 			}
@@ -169,6 +229,10 @@ func TestRPCInputAndOfflineHelp(t *testing.T) {
 	for _, args := range [][]string{
 		{"rpc", "--args", "{}"},
 		{"rpc", "getTenantDetails", "extra"},
+		{"rpc", "getTenantDetails", "{}", "{}", "--args={}"},
+		{"rpc", "getTenantDetails", "{}", "--args={}"},
+		{"rpc", "getTenantDetails", "--args", "{}", "{}"},
+		{"rpc", "getTenantDetails", "[]"},
 		{"rpc", "getTenantDetails", "--args", "[]"},
 		{"rpc", "getTenantDetails", "--args", "not JSON"},
 		{"rpc", "getTenantDetails", "--profile="},
@@ -201,6 +265,7 @@ func TestRPCActionHelp(t *testing.T) {
 			return ""
 		}
 	}
+	createCloudProfile(t, options)
 	options.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
 		t.Error("RPC help made a network request")
 		return nil, nil
@@ -211,7 +276,7 @@ func TestRPCActionHelp(t *testing.T) {
 	}{
 		{
 			action: "getWorkbook", flag: "--help",
-			want: []string{"Returns the specified workbook.", "Example:", "datalens rpc getWorkbook --args",
+			want: []string{"Returns the specified workbook.", "Example:", "datalens rpc getWorkbook '{",
 				"Required: workbookId", "includePermissionsInfo", "datalens schema show getWorkbook"},
 		},
 		{
@@ -302,6 +367,7 @@ func TestRPCActionHelpSelectsInstallation(t *testing.T) {
 
 func TestSchemaShowUsesProfileAndWritesOnlyJSON(t *testing.T) {
 	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
+	createCloudProfile(t, options)
 	options.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
 		t.Fatal("schema lookup contacted the API")
 		return nil, nil
@@ -322,7 +388,7 @@ func TestSchemaShowUsesProfileAndWritesOnlyJSON(t *testing.T) {
 		}
 	}
 	for action, code := range map[string]string{"updateEditorChartSecrets": "RPC_ACTION_UNDOCUMENTED", "getTenantDetails": "RPC_SCHEMA_UNAVAILABLE"} {
-		result := execute(t.Context(), options, "schema", "show", action, "--format=json")
+		result := execute(t.Context(), options, "schema", "show", action, "--profile=cloud", "--format=json")
 		assertFailure(t, result, 2, code)
 	}
 }

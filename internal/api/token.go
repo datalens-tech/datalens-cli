@@ -10,24 +10,32 @@ import (
 	"strings"
 	"time"
 
+	"github.com/datalens-tech/datalens-cli/internal/config"
 	"github.com/datalens-tech/datalens-cli/internal/output"
 )
 
 const maxTokenSize = 64 << 10
 
-func ResolveToken(ctx context.Context, explicit *string, tokenCommand []string, lookupEnv func(string) string) (string, error) {
+func ResolveToken(ctx context.Context, explicit *string, profile config.Profile, lookupEnv func(string) string) (string, error) {
 	if explicit != nil {
 		return validateToken(*explicit)
 	}
-	if len(tokenCommand) > 0 {
-		return runTokenCommand(ctx, tokenCommand)
+	if len(profile.TokenCommand) > 0 {
+		return runTokenCommand(ctx, profile.TokenCommand)
+	}
+	tokenSources := "DATALENS_TOKEN or DATALENS_TOKEN_PATH"
+	if profile.Installation == "yateam" {
+		if token := lookupEnv("DATALENS_OAUTH_TOKEN"); token != "" {
+			return validateToken(token)
+		}
+		tokenSources = "DATALENS_OAUTH_TOKEN, DATALENS_TOKEN, or DATALENS_TOKEN_PATH"
 	}
 	if token := lookupEnv("DATALENS_TOKEN"); token != "" {
 		return validateToken(token)
 	}
 	path := lookupEnv("DATALENS_TOKEN_PATH")
 	if path == "" {
-		return "", &output.Error{Code: "AUTH_TOKEN_REQUIRED", Message: "Provide a token with --auth-token, a profile token command, DATALENS_TOKEN, or DATALENS_TOKEN_PATH.", ExitCode: 3}
+		return "", &output.Error{Code: "AUTH_TOKEN_REQUIRED", Message: "Pass --auth-token, configure a profile token command, or set " + tokenSources + ".", ExitCode: 3}
 	}
 	unreadable := &output.Error{Code: "AUTH_TOKEN_FILE_INVALID", Message: "DATALENS_TOKEN_PATH must point to a readable, regular token file.", ExitCode: 2}
 	info, err := os.Stat(path)

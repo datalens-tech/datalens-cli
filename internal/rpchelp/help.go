@@ -84,13 +84,10 @@ func Write(w io.Writer, action, installation, explicitProfile string) error {
 	if err != nil {
 		return err
 	}
-	profileFlag := ""
-	if explicitProfile != "" {
-		profileFlag = " --profile=" + explicitProfile
-	}
+	profileFlag := profileOption(explicitProfile)
 	op, ok := c.Actions[action]
 	if !ok {
-		_, err := fmt.Fprintf(w, "Usage:\n  datalens rpc %s [--args JSON]%s\n\nNo bundled documentation for this RPC action in the %s API reference.\n", action, profileFlag, edition)
+		_, err := fmt.Fprintf(w, "Usage:\n  datalens rpc %s [JSON]%s\n\nNo bundled documentation for this RPC action in the %s API reference.\n", action, profileFlag, edition)
 		return err
 	}
 	body, err := c.format(action, edition, profileFlag, op)
@@ -111,9 +108,9 @@ func (c catalog) format(action, edition, profileFlag string, op operation) (stri
 			return "", err
 		}
 	}
-	args := "[--args JSON]"
+	args := "[JSON]"
 	if len(fields.required) > 0 {
-		args = "--args JSON"
+		args = "JSON"
 	}
 	fmt.Fprintf(&text, "Usage:\n  datalens rpc %s %s%s\n\n%s API reference\n", action, args, profileFlag, edition)
 	if op.Description != "" {
@@ -133,30 +130,41 @@ func (c catalog) format(action, edition, profileFlag string, op operation) (stri
 		}
 	}
 	example := op.Example
-	if len(example) == 0 {
-		switch action {
-		case "getTenantDetails":
-			example = json.RawMessage(`{}`)
-		case "getWorkbook":
-			example = json.RawMessage(`{"workbookId":"your-workbook-id"}`)
+	if len(example) == 0 && len(op.Schema) != 0 {
+		schema, err := c.compileOperation(op)
+		if err != nil {
+			return "", err
 		}
+		example = minimalExample(schema)
+	} else if len(example) == 0 && action == "getTenantDetails" {
+		example = json.RawMessage(`{}`)
 	}
 	if len(example) != 0 {
 		var compact bytes.Buffer
 		if err := json.Compact(&compact, example); err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&text, "\nExample:\n  datalens rpc %s", action)
-		if compact.String() != "{}" {
-			fmt.Fprintf(&text, " --args '%s'", strings.ReplaceAll(compact.String(), "'", "'\\''"))
-		}
-		text.WriteString(profileFlag)
-		text.WriteByte('\n')
+		fmt.Fprintf(&text, "\nExample:\n  %s\n", exampleCommand(action, profileFlag, compact.String()))
 	}
 	if len(op.Schema) != 0 {
 		fmt.Fprintf(&text, "\nFull argument schema (JSON):\n  datalens schema show %s%s\n", action, profileFlag)
 	}
 	return text.String(), nil
+}
+
+func profileOption(name string) string {
+	if name == "" {
+		return ""
+	}
+	return " --profile=" + name
+}
+
+func exampleCommand(action, profileFlag, body string) string {
+	command := "datalens rpc " + action
+	if body != "{}" {
+		command += " '" + strings.ReplaceAll(body, "'", "'\\''") + "'"
+	}
+	return command + profileFlag
 }
 
 type arguments struct {

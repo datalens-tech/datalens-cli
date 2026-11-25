@@ -120,9 +120,14 @@ main() {
     stage=''
     printf 'Installed DataLens CLI %s to %s\n' "$tag" "$target"
     case ":${PATH:-}:" in
-        *":$install_dir:"*) ;;
-        *) printf 'Add this directory to your PATH: %s\n' "$install_dir" ;;
+        *":$install_dir:"*) setup_command=datalens ;;
+        *)
+            printf 'Add this directory to your PATH: %s\n' "$install_dir"
+            escaped_target=$(printf '%s' "$target" | sed "s/'/'\"'\"'/g")
+            setup_command="'$escaped_target'"
+            ;;
     esac
+    printf 'To configure a profile, run:\n  %s setup\n' "$setup_command"
 }
 
 main "$@"

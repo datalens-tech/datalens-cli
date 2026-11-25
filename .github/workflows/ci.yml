@@ -2,10 +2,14 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
+
+env:
+  VERSION: 0.0.0
 
 jobs:
   test:
@@ -33,3 +37,25 @@ jobs:
           cache: true
       - run: make dist
       - run: make verify-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-install-fixture
+          path: |
+            dist/${{ env.VERSION }}/datalens_${{ env.VERSION }}_windows_amd64.zip
+            dist/${{ env.VERSION }}/SHA256SUMS
+            dist/${{ env.VERSION }}/install.ps1
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+  windows-install:
+    needs: distribution
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-install-fixture
+          path: windows-release
+      - name: Install and run the Windows release
+        shell: powershell
+        run: ./scripts/test_windows_install.ps1 -Assets windows-release -Version $env:VERSION -Revision $env:GITHUB_SHA

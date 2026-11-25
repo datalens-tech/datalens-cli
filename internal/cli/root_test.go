@@ -94,13 +94,6 @@ func TestProfileLifecycleAndSelection(t *testing.T) {
 		}
 		return document(t, result.stdout)
 	}
-	initial := run("profiles", "list")
-	if len(initial["profiles"].([]any)) != 1 || initial["selectedProfile"] != "default" || initial["defaultProfile"] != "default" {
-		t.Fatalf("initial profiles: %#v", initial)
-	}
-	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("listing implicit default created config directory: %v", err)
-	}
 	for _, name := range []string{"saved", "environment", "explicit"} {
 		created := run("profiles", "create", name, "--installation-type", "yateam")
 		if created["name"] != name {
@@ -117,17 +110,11 @@ func TestProfileLifecycleAndSelection(t *testing.T) {
 	for i, value := range profiles {
 		profile := value.(map[string]any)
 		names[i] = profile["name"].(string)
-		if names[i] == "default" {
-			if profile["installationType"] != "cloud" || profile["endpoint"] != "https://datalens.ru" || profile["apiEndpoint"] != "https://api.datalens.tech" {
-				t.Fatalf("default profile: %#v", profile)
-			}
-			continue
-		}
 		if profile["endpoint"] != "https://datalens.yandex-team.ru" || profile["apiEndpoint"] != "https://api.datalens.yandex.net" || profile["installationType"] != "yateam" {
 			t.Fatalf("profile: %#v", profile)
 		}
 	}
-	if !reflect.DeepEqual(names, []string{"default", "environment", "explicit", "saved"}) {
+	if !reflect.DeepEqual(names, []string{"environment", "explicit", "saved"}) {
 		t.Fatalf("profiles are not sorted: %v", names)
 	}
 	env["DATALENS_PROFILE"] = "environment"
@@ -151,7 +138,7 @@ func TestProfileLifecycleAndSelection(t *testing.T) {
 	delete(env, "DATALENS_PROFILE")
 	run("profiles", "delete", "saved", "--confirm=yes")
 	listed = run("profiles", "list")
-	if listed["defaultProfile"] != "default" || listed["selectedProfile"] != "default" || len(listed["profiles"].([]any)) != 3 {
+	if listed["defaultProfile"] != "environment" || listed["selectedProfile"] != "environment" || len(listed["profiles"].([]any)) != 2 {
 		t.Fatalf("deleted default: %#v", listed)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "config.json")); err != nil {
@@ -214,7 +201,7 @@ func TestProfileCreatePersistsOnlyExplicitOrganization(t *testing.T) {
 		t.Fatalf("list failed: %#v", result)
 	}
 	profiles := document(t, result.stdout)["profiles"].([]any)
-	if len(profiles) != 3 || profiles[1].(map[string]any)["organizationId"] != "explicit-org" || profiles[2].(map[string]any)["organizationId"] != nil {
+	if len(profiles) != 2 || profiles[0].(map[string]any)["organizationId"] != "explicit-org" || profiles[1].(map[string]any)["organizationId"] != nil {
 		t.Fatalf("persisted organizations: %#v", profiles)
 	}
 }
@@ -239,7 +226,7 @@ func TestRecreateCloudProfileWithNewOrganization(t *testing.T) {
 	run("profiles", "delete", "work", "--confirm=yes")
 	run("profiles", "create", "work", "--installation-type=cloud", "--organization=new-org")
 	profiles := run("profiles", "list")["profiles"].([]any)
-	work := profiles[1].(map[string]any)
+	work := profiles[0].(map[string]any)
 	if work["name"] != "work" || work["organizationId"] != "new-org" {
 		t.Fatalf("recreated profile: %#v", work)
 	}
@@ -269,7 +256,36 @@ func TestProfileDeleteConfirmation(t *testing.T) {
 	if result.code != 0 || !strings.Contains(result.stderr, "[y/N]") || !strings.Contains(result.stdout, "Deleted profile work") {
 		t.Fatalf("accepted: %#v", result)
 	}
-	assertFailure(t, execute(context.Background(), options, "profiles", "activate", "work", "--format=json"), 2, "PROFILE_NOT_FOUND")
+	assertFailure(t, execute(context.Background(), options, "profiles", "activate", "work", "--format=json"), 2, "NO_PROFILES")
+}
+
+func TestProfileDeleteChecksTargetBeforeConfirmation(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "config")
+	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": dir})
+	options.IsTerminal = func(io.Reader) bool { return true }
+	input := strings.NewReader("yes\n")
+	options.In = input
+
+	result := execute(t.Context(), options, "profiles", "delete", "default")
+	if result.code != 2 || !strings.Contains(result.stderr, "datalens setup") || !strings.Contains(result.stderr, "datalens profiles create") {
+		t.Fatalf("empty installation: %#v", result)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty installation created a directory: %v", err)
+	}
+	if result := execute(t.Context(), options, "profiles", "create", "default"); result.code != 0 {
+		t.Fatalf("create default: %#v", result)
+	}
+	result = execute(t.Context(), options, "profiles", "delete", "missing", "--format=json")
+	assertFailure(t, result, 2, "PROFILE_NOT_FOUND")
+	if input.Len() != len("yes\n") {
+		t.Fatal("delete read confirmation for a missing profile")
+	}
+	result = execute(t.Context(), options, "profiles", "delete", "default")
+	if result.code != 0 || !strings.Contains(result.stderr, `Delete profile "default"? [y/N]`) ||
+		!strings.Contains(result.stdout, "Deleted profile default") || !strings.Contains(result.stdout, "datalens setup") {
+		t.Fatalf("delete last profile: %#v", result)
+	}
 }
 
 func TestProfileDeletePromptTimesOut(t *testing.T) {
@@ -408,6 +424,7 @@ func TestHelpFlagRejectsUnknownSubcommand(t *testing.T) {
 
 func TestHelpFlagResolvesCommandAndAllowsLeafArguments(t *testing.T) {
 	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
+	createCloudProfile(t, options)
 	for _, test := range []struct {
 		args []string
 		path string

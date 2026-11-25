@@ -31,6 +31,10 @@ def schema_with_refs(schema):
         for key, value in node.items():
             if key == "$ref":
                 result[key] = translate(value)
+            elif (key == "additionalProperties" and value is False and node.get("properties") == {}
+                  and "discriminator" in node and "oneOf" in node):
+                # These OpenAPI wrappers declare their properties only inside the selected variant.
+                result["unevaluatedProperties"] = False
             elif key == "discriminator" and isinstance(value, dict) and "mapping" in value:
                 result[key] = {**value, "mapping": {k: translate(v) for k, v in value["mapping"].items()}}
             elif key in ("properties", "patternProperties", "$defs", "dependentSchemas"):

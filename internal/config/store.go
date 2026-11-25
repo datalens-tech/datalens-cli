@@ -115,7 +115,7 @@ func (s Store) Load() (Document, error) {
 		return Document{}, failure("CONFIG_INVALID", "Configuration file has an invalid structure.")
 	}
 	for name, profile := range doc.Profiles {
-		if !validName(name) {
+		if !ValidProfileName(name) {
 			return Document{}, failure("CONFIG_INVALID", "Configuration contains an invalid profile name.")
 		}
 		normalized, err := NormalizeProfile(profile)
@@ -124,16 +124,29 @@ func (s Store) Load() (Document, error) {
 		}
 		doc.Profiles[name] = normalized
 	}
-	if doc.CurrentProfile != "" && doc.CurrentProfile != defaultName {
-		if _, ok := doc.Profiles[doc.CurrentProfile]; !ok {
-			return Document{}, failure("CONFIG_INVALID", "The default profile does not exist in the configuration.")
+	if doc.CurrentProfile == "" {
+		// Older configurations selected "default" when no active profile was recorded.
+		doc.CurrentProfile = defaultName
+	}
+	if _, ok := doc.Profiles[doc.CurrentProfile]; !ok {
+		if doc.CurrentProfile != defaultName {
+			return Document{}, failure("CONFIG_INVALID", "The active profile does not exist in the configuration.")
 		}
+		doc.CurrentProfile = doc.ActiveName()
 	}
 	return doc, nil
 }
 
 func (s Store) Create(ctx context.Context, name string, profile Profile) error {
-	if !validName(name) {
+	return s.create(ctx, name, profile, false)
+}
+
+func (s Store) CreateAndUse(ctx context.Context, name string, profile Profile) error {
+	return s.create(ctx, name, profile, true)
+}
+
+func (s Store) create(ctx context.Context, name string, profile Profile, activate bool) error {
+	if !ValidProfileName(name) {
 		return failure("PROFILE_INVALID", "Profile names may contain only letters, digits, dots, underscores, and hyphens.")
 	}
 	p, err := NormalizeProfile(profile)
@@ -145,12 +158,15 @@ func (s Store) Create(ctx context.Context, name string, profile Profile) error {
 			return failure("PROFILE_EXISTS", "A profile with this name already exists.")
 		}
 		doc.Profiles[name] = p
+		if activate || len(doc.Profiles) == 1 {
+			doc.CurrentProfile = name
+		}
 		return nil
 	})
 }
 
 func (s Store) Use(ctx context.Context, name string) error {
-	if !validName(name) {
+	if !ValidProfileName(name) {
 		return failure("PROFILE_INVALID", "A valid profile name is required.")
 	}
 	return s.mutate(ctx, func(doc *Document) error {
@@ -162,23 +178,35 @@ func (s Store) Use(ctx context.Context, name string) error {
 	})
 }
 
-func (s Store) Delete(ctx context.Context, name string) error {
-	if !validName(name) {
+func (d Document) CheckDeletable(name string) error {
+	if !ValidProfileName(name) {
 		return failure("PROFILE_INVALID", "A valid profile name is required.")
 	}
-	return s.mutate(ctx, func(doc *Document) error {
-		if _, exists := doc.Profiles[name]; !exists {
-			if name == defaultName {
-				return failure("PROFILE_IMPLICIT", "The built-in default profile has no saved settings to delete.")
-			}
-			return failure("PROFILE_NOT_FOUND", "The selected profile does not exist.")
+	if _, exists := d.Profiles[name]; exists {
+		return nil
+	}
+	if len(d.Profiles) == 0 {
+		return failure("NO_PROFILES", NoProfilesMessage)
+	}
+	return failure("PROFILE_NOT_FOUND", "The selected profile does not exist.")
+}
+
+func (s Store) Delete(ctx context.Context, name string) (empty bool, err error) {
+	if !ValidProfileName(name) {
+		return false, failure("PROFILE_INVALID", "A valid profile name is required.")
+	}
+	err = s.mutate(ctx, func(doc *Document) error {
+		if err := doc.CheckDeletable(name); err != nil {
+			return err
 		}
 		delete(doc.Profiles, name)
 		if doc.CurrentProfile == name {
-			doc.CurrentProfile = ""
+			doc.CurrentProfile = doc.ActiveName()
 		}
+		empty = len(doc.Profiles) == 0
 		return nil
 	})
+	return empty && err == nil, err
 }
 
 func (s Store) mutate(ctx context.Context, change func(*Document) error) error {

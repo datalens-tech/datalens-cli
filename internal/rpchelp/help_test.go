@@ -36,7 +36,7 @@ func TestExamplePreservesJSONInShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(text, `datalens rpc test --args '{"id":9007199254740993,"name":"O'\''Brien"}'`) {
+	if !strings.Contains(text, `datalens rpc test '{"id":9007199254740993,"name":"O'\''Brien"}'`) {
 		t.Fatalf("example: %s", text)
 	}
 }
@@ -77,7 +77,7 @@ func TestCompactArgumentHelp(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, line := range []string{
-				"datalens rpc " + tc.action + " --args JSON --profile=work",
+				"datalens rpc " + tc.action + " JSON --profile=work",
 				"Required: " + tc.required + "\n", tc.hint,
 				"datalens schema show " + tc.action + " --profile=work",
 			} {
@@ -88,7 +88,7 @@ func TestCompactArgumentHelp(t *testing.T) {
 			if strings.Contains(text.String(), "$defs") {
 				t.Fatal("full schema leaked into compact help")
 			}
-			if tc.action == "getWorkbook" && !strings.Contains(text.String(), `datalens rpc getWorkbook --args '{"workbookId":"your-workbook-id"}' --profile=work`) {
+			if tc.action == "getWorkbook" && !strings.Contains(text.String(), `datalens rpc getWorkbook '{"workbookId":"your-workbook-id"}' --profile=work`) {
 				t.Fatal("example lost explicit profile")
 			}
 		})

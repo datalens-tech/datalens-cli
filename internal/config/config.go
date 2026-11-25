@@ -1,7 +1,6 @@
 package config
 
 import (
-	"maps"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -11,6 +10,8 @@ import (
 )
 
 const SchemaVersion = 2
+
+const NoProfilesMessage = "No profiles configured. Run 'datalens setup' or 'datalens profiles create work --installation-type=cloud'."
 
 const (
 	defaultName = "default"
@@ -47,7 +48,7 @@ func failure(code, message string) error {
 
 var profileName = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-func validName(name string) bool {
+func ValidProfileName(name string) bool {
 	return profileName.MatchString(name) && name != "." && name != ".."
 }
 
@@ -151,19 +152,22 @@ func normalizeEndpoint(endpoint string) (*url.URL, error) {
 }
 
 func (d Document) ActiveName() string {
-	if d.CurrentProfile != "" {
+	if _, ok := d.Profiles[d.CurrentProfile]; ok {
 		return d.CurrentProfile
 	}
-	return defaultName
-}
-
-func (d Document) EffectiveProfiles() map[string]Profile {
-	profiles := map[string]Profile{defaultName: {Installation: "cloud", Endpoint: cloudUI, APIEndpoint: cloudAPI}}
-	maps.Copy(profiles, d.Profiles)
-	return profiles
+	var first string
+	for name := range d.Profiles {
+		if first == "" || name < first {
+			first = name
+		}
+	}
+	return first
 }
 
 func Resolve(doc Document, explicitName, envName string) (string, Profile, error) {
+	if len(doc.Profiles) == 0 {
+		return "", Profile{}, failure("NO_PROFILES", NoProfilesMessage)
+	}
 	name := explicitName
 	if name == "" {
 		name = envName
@@ -171,11 +175,11 @@ func Resolve(doc Document, explicitName, envName string) (string, Profile, error
 	if name == "" {
 		name = doc.ActiveName()
 	}
-	if !validName(name) {
+	if !ValidProfileName(name) {
 		return "", Profile{}, failure("PROFILE_INVALID", "Profile names may contain only letters, digits, dots, underscores, and hyphens.")
 	}
 	p, ok := doc.Profiles[name]
-	if !ok && name != defaultName {
+	if !ok {
 		return "", Profile{}, failure("PROFILE_NOT_FOUND", "The selected profile does not exist.")
 	}
 	p, err := NormalizeProfile(p)

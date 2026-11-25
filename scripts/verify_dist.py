@@ -7,7 +7,7 @@ import tarfile
 import tempfile
 import zipfile
 
-from dist import digest
+from dist import LEGAL_FILES, digest
 
 
 def verify(targets):
@@ -19,11 +19,13 @@ def verify(targets):
         system, arch = target.split("/")
         suffix = "zip" if system == "windows" else "tar.gz"
         archives[f"datalens_{version}_{system}_{arch}.{suffix}"] = (system, arch)
-    assets = set(archives) | {"install.sh"}
+    installers = {"install.sh", "install.ps1"}
+    assets = set(archives) | installers
     if {p.name for p in directory.iterdir()} != assets | {"SHA256SUMS"}:
         sys.exit("unexpected distribution files")
-    if (directory / "install.sh").read_bytes() != Path("install.sh").read_bytes():
-        sys.exit("incorrect installer in distribution")
+    for name in installers:
+        if (directory / name).read_bytes() != Path(name).read_bytes():
+            sys.exit(f"incorrect {name} in distribution")
     manifest = "".join(f"{digest(directory / name)}  {name}\n" for name in sorted(assets))
     if (directory / "SHA256SUMS").read_bytes() != manifest.encode("ascii"):
         sys.exit("SHA256SUMS does not match the distribution files")
@@ -32,7 +34,7 @@ def verify(targets):
         for name, (system, arch) in archives.items():
             windows = system == "windows"
             binary = "datalens.exe" if windows else "datalens"
-            members = sorted([binary, "LICENSE", "NOTICES"])
+            members = sorted([binary, *LEGAL_FILES])
             path = directory / name
             if windows:
                 with zipfile.ZipFile(path) as archive:
@@ -45,7 +47,7 @@ def verify(targets):
                             or archive.getmember(binary).mode != 0o755):
                         sys.exit(f"unexpected members or executable permissions in {name}")
                     contents = {key: archive.extractfile(key).read() for key in members}
-            for key in ["LICENSE", "NOTICES"]:
+            for key in LEGAL_FILES:
                 if contents[key] != Path(key).read_bytes():
                     sys.exit(f"incorrect {key} in {name}")
 

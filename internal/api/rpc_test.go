@@ -24,32 +24,50 @@ func TestResolveToken(t *testing.T) {
 	}
 	env := map[string]string{"DATALENS_TOKEN": "from-env", "DATALENS_TOKEN_PATH": path}
 	lookup := func(name string) string { return env[name] }
+	profile := config.Profile{Installation: "yateam"}
 	explicit := "from-flag"
 	check := func(flag *string, want string) {
 		t.Helper()
-		got, err := ResolveToken(t.Context(), flag, nil, lookup)
+		got, err := ResolveToken(t.Context(), flag, profile, lookup)
 		if err != nil || got != want {
 			t.Fatalf("got %q, %v; want %q", got, err, want)
 		}
 	}
+	env["DATALENS_OAUTH_TOKEN"] = "from-oauth"
 	check(&explicit, "from-flag")
+	check(nil, "from-oauth")
 	explicit = ""
-	_, err := ResolveToken(t.Context(), &explicit, nil, lookup)
+	_, err := ResolveToken(t.Context(), &explicit, profile, lookup)
 	requireCode(t, err, "AUTH_TOKEN_INVALID", 3)
+	env["DATALENS_OAUTH_TOKEN"] = "invalid token"
+	_, err = ResolveToken(t.Context(), nil, profile, lookup)
+	requireCode(t, err, "AUTH_TOKEN_INVALID", 3)
+	delete(env, "DATALENS_OAUTH_TOKEN")
 	check(nil, "from-env")
 	delete(env, "DATALENS_TOKEN")
 	check(nil, "from-file")
 	if err := os.WriteFile(path, []byte("first\nsecond\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = ResolveToken(t.Context(), nil, nil, lookup)
+	_, err = ResolveToken(t.Context(), nil, profile, lookup)
 	requireCode(t, err, "AUTH_TOKEN_INVALID", 3)
 	env["DATALENS_TOKEN_PATH"] = filepath.Dir(path)
-	_, err = ResolveToken(t.Context(), nil, nil, lookup)
+	_, err = ResolveToken(t.Context(), nil, profile, lookup)
 	requireCode(t, err, "AUTH_TOKEN_FILE_INVALID", 2)
 	delete(env, "DATALENS_TOKEN_PATH")
-	_, err = ResolveToken(t.Context(), nil, nil, lookup)
+	_, err = ResolveToken(t.Context(), nil, profile, lookup)
 	requireCode(t, err, "AUTH_TOKEN_REQUIRED", 3)
+	if !strings.Contains(err.Error(), "DATALENS_OAUTH_TOKEN") {
+		t.Fatal("missing YaTeam token hint")
+	}
+	env["DATALENS_OAUTH_TOKEN"] = "from-oauth"
+	for _, installation := range []string{"cloud", "onpremise-standalone", "stackland"} {
+		_, err := ResolveToken(t.Context(), nil, config.Profile{Installation: installation}, lookup)
+		requireCode(t, err, "AUTH_TOKEN_REQUIRED", 3)
+		if strings.Contains(err.Error(), "DATALENS_OAUTH_TOKEN") {
+			t.Errorf("unexpected YaTeam token hint for %s", installation)
+		}
+	}
 }
 
 func TestRPCInstallationHeadersAndPayload(t *testing.T) {

@@ -11,6 +11,9 @@ import tempfile
 import zipfile
 
 
+LEGAL_FILES = ("LICENSE", "NOTICES", "THIRD_PARTY_NOTICES.md")
+
+
 def pack(archive, files):
     if archive.suffix == ".zip":
         with zipfile.ZipFile(archive, "w") as bundle:
@@ -67,13 +70,14 @@ def build(targets):
                            check=True)
             suffix = "zip" if windows else "tar.gz"
             archive = assets / f"datalens_{version}_{system}_{arch}.{suffix}"
-            pack(archive, [(binary, 0o755), (Path("LICENSE"), 0o644), (Path("NOTICES"), 0o644)])
+            pack(archive, [(binary, 0o755)] + [(Path(name), 0o644) for name in LEGAL_FILES])
             checksums.append(f"{digest(archive)}  {archive.name}\n")
 
-        installer = assets / "install.sh"
-        shutil.copyfile("install.sh", installer)
-        installer.chmod(0o755)
-        checksums.append(f"{digest(installer)}  {installer.name}\n")
+        for name in ("install.ps1", "install.sh"):
+            installer = assets / name
+            shutil.copyfile(name, installer)
+            installer.chmod(0o755 if name == "install.sh" else 0o644)
+            checksums.append(f"{digest(installer)}  {name}\n")
 
         manifest = assets / "SHA256SUMS"
         manifest.write_bytes("".join(checksums).encode("ascii"))

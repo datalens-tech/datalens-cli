@@ -12,22 +12,18 @@ import (
 )
 
 func (a *app) rpcCommand() *cobra.Command {
-	var argsJSON string
 	command := &cobra.Command{
-		Use:   "rpc ACTION",
+		Use:   "rpc ACTION [JSON]",
 		Short: "Call a DataLens RPC action",
-		Long:  "Call a DataLens RPC action by name and print its JSON response. Pass action parameters as a JSON object with --args, or omit --args to send {}. Use datalens rpc ACTION --help for an argument summary or datalens schema show ACTION for the full JSON argument schema.",
+		Long:  "Call a DataLens RPC action by name and print its JSON response. Pass a JSON object after the action name or omit it to send {}. The CLI checks the arguments against the selected installation's schema when available. Use datalens rpc ACTION --help for an argument summary or datalens schema show ACTION for the full JSON argument schema.",
 		Example: `  datalens rpc getTenantDetails
-  datalens rpc getWorkbook --args '{"workbookId":"your-workbook-id"}'`,
+  datalens rpc getWorkbook '{"workbookId":"your-workbook-id"}'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 && !cmd.Flags().Changed("args") {
 				return cmd.Help()
 			}
-			if err := exactArgs(1)(cmd, args); err != nil {
-				return err
-			}
-			body := json.RawMessage(argsJSON)
-			if err := api.ValidateRPC(args[0], body); err != nil {
+			body, err := rpcArguments(cmd, args)
+			if err != nil {
 				return err
 			}
 			profile, err := a.selectedProfile()
@@ -37,8 +33,27 @@ func (a *app) rpcCommand() *cobra.Command {
 			return a.call(cmd, profile, args[0], body)
 		},
 	}
-	command.Flags().StringVar(&argsJSON, "args", "{}", "RPC arguments as a JSON object")
+	command.Flags().String("args", "{}", "Pass the JSON object as a flag instead of a positional argument")
 	return command
+}
+
+func rpcArguments(cmd *cobra.Command, args []string) (json.RawMessage, error) {
+	var raw string
+	switch len(args) {
+	case 0:
+		return nil, usageError("Specify an RPC action. See 'datalens rpc --help' for examples.")
+	case 1:
+		raw, _ = cmd.Flags().GetString("args")
+	case 2:
+		if cmd.Flags().Changed("args") {
+			return nil, usageError("Pass the JSON object only once, either after the action name or with --args.")
+		}
+		raw = args[1]
+	default:
+		return nil, usageError("Pass the JSON object as a single argument. In bash or zsh, wrap it in single quotes.")
+	}
+	body := json.RawMessage(raw)
+	return body, api.ValidateRPC(args[0], body)
 }
 
 func (a *app) schemaCommand() *cobra.Command {
@@ -90,10 +105,7 @@ func (a *app) tenantCommand() *cobra.Command {
 func showHelp(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 
 func (a *app) showRPCActionHelp(cmd *cobra.Command, args []string) error {
-	if err := exactArgs(1)(cmd, args); err != nil {
-		return err
-	}
-	if err := api.ValidateAction(args[0]); err != nil {
+	if _, err := rpcArguments(cmd, args); err != nil {
 		return err
 	}
 	if cmd.Flags().Changed("profile") && a.profile == "" {
@@ -120,6 +132,9 @@ func (a *app) selectedProfile() (config.Profile, error) {
 }
 
 func (a *app) call(cmd *cobra.Command, profile config.Profile, action string, args json.RawMessage) error {
+	if err := rpchelp.ValidateArgs(action, profile.Installation, a.profile, args); err != nil {
+		return err
+	}
 	if profile.Installation == "cloud" && profile.OrganizationID == "" {
 		profile.OrganizationID = a.options.LookupEnv("DATALENS_ORG_ID")
 	}
@@ -127,7 +142,7 @@ func (a *app) call(cmd *cobra.Command, profile config.Profile, action string, ar
 	if cmd.Flags().Changed("auth-token") {
 		explicitToken = &a.authToken
 	}
-	token, err := api.ResolveToken(cmd.Context(), explicitToken, profile.TokenCommand, a.options.LookupEnv)
+	token, err := api.ResolveToken(cmd.Context(), explicitToken, profile, a.options.LookupEnv)
 	if err != nil {
 		return err
 	}

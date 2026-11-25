@@ -26,6 +26,10 @@ func profileNameArg(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("profile") {
 		return usageError("Pass the profile name as a positional argument and omit --profile.")
 	}
+	if len(args) == 0 {
+		path := cmd.CommandPath()
+		return usageError(fmt.Sprintf("Missing profile name. Example: %s work\nSee '%s --help' for options.", path, path))
+	}
 	return exactArgs(1)(cmd, args)
 }
 
@@ -106,15 +110,19 @@ func (a *app) listProfilesCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			selected, _, err := config.Resolve(document, a.profile, a.options.LookupEnv("DATALENS_PROFILE"))
-			if err != nil {
-				return err
-			}
-			effective := document.EffectiveProfiles()
-			profiles := make([]profileSummary, 0, len(effective))
+			var selected string
 			var text strings.Builder
-			for _, name := range slices.Sorted(maps.Keys(effective)) {
-				profile := effective[name]
+			if len(document.Profiles) == 0 {
+				text.WriteString(config.NoProfilesMessage + "\n")
+			} else {
+				selected, _, err = config.Resolve(document, a.profile, a.options.LookupEnv("DATALENS_PROFILE"))
+				if err != nil {
+					return err
+				}
+			}
+			profiles := make([]profileSummary, 0, len(document.Profiles))
+			for _, name := range slices.Sorted(maps.Keys(document.Profiles)) {
+				profile := document.Profiles[name]
 				profiles = append(profiles, profileSummary{Name: name, Profile: profile})
 				marker := " "
 				if name == selected {
@@ -126,7 +134,7 @@ func (a *app) listProfilesCommand() *cobra.Command {
 				Profiles        []profileSummary `json:"profiles"`
 				DefaultProfile  string           `json:"defaultProfile"`
 				SelectedProfile string           `json:"selectedProfile"`
-			}{profiles, document.ActiveName(), selected}, text.String())
+			}{profiles, document.CurrentProfile, selected}, text.String())
 		},
 	}
 }
@@ -152,21 +160,36 @@ func (a *app) deleteProfileCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "delete NAME", Short: "Delete a local profile", Args: profileNameArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("confirm") {
-				if confirm != "yes" {
-					return usageError("use --confirm=yes to confirm deletion")
-				}
-			} else if err := a.confirmDeletion(cmd.Context(), args[0]); err != nil {
-				return err
+			name := args[0]
+			hasConfirm := cmd.Flags().Changed("confirm")
+			if hasConfirm && confirm != "yes" {
+				return usageError("use --confirm=yes to confirm deletion")
 			}
 			store, err := a.store()
 			if err != nil {
 				return err
 			}
-			if err := store.Delete(cmd.Context(), args[0]); err != nil {
+			doc, err := store.Load()
+			if err != nil {
 				return err
 			}
-			return a.writer.Result(map[string]string{"name": args[0]}, fmt.Sprintf("Deleted profile %s.\n", args[0]))
+			if err := doc.CheckDeletable(name); err != nil {
+				return err
+			}
+			if !hasConfirm {
+				if err := a.confirmDeletion(cmd.Context(), name); err != nil {
+					return err
+				}
+			}
+			empty, err := store.Delete(cmd.Context(), name)
+			if err != nil {
+				return err
+			}
+			message := fmt.Sprintf("Deleted profile %s.\n", name)
+			if empty {
+				message += config.NoProfilesMessage + "\n"
+			}
+			return a.writer.Result(map[string]string{"name": name}, message)
 		},
 	}
 	cmd.Flags().StringVar(&confirm, "confirm", "", "Pass yes to delete without a prompt")

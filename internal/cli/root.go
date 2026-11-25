@@ -73,12 +73,16 @@ func Execute(ctx context.Context, args []string, options Options) int {
 	root.SetArgs(args)
 	cmd, flagArgs, findErr := root.Find(args)
 	commandTimeout := a.timeout
-	readOutputFlags(cmd, flagArgs)
+	hasTimeout := readOutputFlags(cmd, flagArgs)
 	if a.timeout > 0 {
 		commandTimeout = a.timeout
 	}
-	commandContext, cancel := context.WithTimeout(ctx, commandTimeout)
-	defer cancel()
+	commandContext := ctx
+	if cmd.Name() != "setup" || hasTimeout {
+		var cancel context.CancelFunc
+		commandContext, cancel = context.WithTimeout(ctx, commandTimeout)
+		defer cancel()
+	}
 	stdout := &commandStream{ctx: commandContext, dest: options.Out}
 	stderr := &commandStream{ctx: commandContext, dest: options.Err}
 	a.options.Err = stderr
@@ -174,6 +178,7 @@ func (a *app) shouldNotifyUpdate() bool {
 func (a *app) root() *cobra.Command {
 	root := &cobra.Command{
 		Use: "datalens", Short: "Work with DataLens from the command line",
+		Example:       "  datalens setup\n  datalens profiles create work --installation-type=cloud",
 		SilenceErrors: true, SilenceUsage: true,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		Args:              groupArgs,
@@ -183,13 +188,13 @@ func (a *app) root() *cobra.Command {
 	flags.StringVar(&a.profile, "profile", "", "Select a profile for RPC, schemas, tenant settings, or profiles list")
 	flags.StringVar(&a.authToken, "auth-token", "", "Use this token for the current API request")
 	flags.StringVar(&a.format, "format", "text", "Output format: text or json")
-	flags.DurationVar(&a.timeout, "timeout", 30*time.Second, "Command timeout")
+	flags.DurationVar(&a.timeout, "timeout", 30*time.Second, "Command timeout (applies to setup only when explicitly set)")
 	flags.BoolVar(&a.nonInteractive, "non-interactive", false, "Disable interactive prompts")
 	flags.BoolVar(&a.debug, "debug", false, "Include safe diagnostic metadata")
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, _ error) error {
 		return usageError("invalid flag or value; see " + cmd.CommandPath() + " --help")
 	})
-	root.AddCommand(a.versionCommand(), a.profilesCommand(), a.rpcCommand(), a.schemaCommand(), a.tenantCommand(), a.cowCommand())
+	root.AddCommand(a.setupCommand(), a.versionCommand(), a.profilesCommand(), a.rpcCommand(), a.schemaCommand(), a.tenantCommand(), a.cowCommand())
 	root.InitDefaultHelpCmd()
 	help, _, _ := root.Find([]string{"help"})
 	help.Args = func(cmd *cobra.Command, args []string) error {
@@ -273,7 +278,7 @@ func usageError(message string) *output.Error {
 }
 
 // Cobra can reject an earlier flag before it reaches the flags controlling the error report.
-func readOutputFlags(cmd *cobra.Command, args []string) {
+func readOutputFlags(cmd *cobra.Command, args []string) (hasTimeout bool) {
 	for len(args) > 0 {
 		arg := args[0]
 		args = args[1:]
@@ -299,8 +304,12 @@ func readOutputFlags(cmd *cobra.Command, args []string) {
 			}
 		}
 		switch name {
-		case "format", "debug", "non-interactive", "timeout":
+		case "timeout":
+			hasTimeout = true
+			_ = flag.Value.Set(value)
+		case "format", "debug", "non-interactive":
 			_ = flag.Value.Set(value)
 		}
 	}
+	return hasTimeout
 }

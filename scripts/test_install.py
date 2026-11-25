@@ -1,10 +1,11 @@
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import unittest
 
-from dist import digest, pack
+from dist import LEGAL_FILES, digest, pack
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,7 +78,7 @@ if [ -n "$out" ]; then cp "$file" "$out"; else cat "$file"; fi
             binary.write_text(f"{version} {target}")
             suffix = "zip" if windows else "tar.gz"
             archive = self.assets / f"datalens_{version}_{target}.{suffix}"
-            pack(archive, [(binary, 0o755), (ROOT / "LICENSE", 0o644), (ROOT / "NOTICES", 0o644)])
+            pack(archive, [(binary, 0o755)] + [(ROOT / name, 0o644) for name in LEGAL_FILES])
             checksums.append(f"{digest(archive)}  {archive.name}\n")
         (self.assets / "SHA256SUMS").write_text("".join(sorted(checksums)))
 
@@ -94,6 +95,8 @@ if [ -n "$out" ]; then cp "$file" "$out"; else cat "$file"; fi
             self.assertEqual(result.returncode, 0, result.stderr)
         else:
             self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertNotIn("To configure a profile", result.stdout)
+        return result.stdout
 
     def test_release_targets(self):
         self.release("0.2.0")
@@ -114,16 +117,18 @@ if [ -n "$out" ]; then cp "$file" "$out"; else cat "$file"; fi
                 self.assertFalse((config / "config.json").exists())
 
     def test_upgrade_preserves_config_and_failed_download_preserves_binary(self):
-        install_dir = self.home / "custom bin"
+        install_dir = self.home / "user's custom bin"
         config_dir = self.home / "custom config"
         self.env.update(DATALENS_INSTALL_DIR=str(install_dir), DATALENS_CONFIG_DIR=str(config_dir))
         self.release("0.1.0")
-        self.install()
+        output = self.install()
+        exe = install_dir / "datalens"
+        self.assertEqual(shlex.split(output.splitlines()[-1]), [str(exe), "setup"])
         config = config_dir / "config.json"
         config.write_text('{"profiles":{}}')
-        exe = install_dir / "datalens"
         self.release("0.2.0")
-        self.install()
+        self.env["PATH"] = f"{install_dir}:{self.env['PATH']}"
+        self.assertEqual(self.install().splitlines()[-1].strip(), "datalens setup")
         self.assertEqual(exe.read_text(), "0.2.0 linux_amd64")
         self.release("0.3.0")
         binary = self.root / "datalens"

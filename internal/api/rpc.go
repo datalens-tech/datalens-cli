@@ -31,7 +31,7 @@ func ValidateRPC(action string, args json.RawMessage) error {
 	}
 	body := bytes.TrimSpace(args)
 	if len(body) == 0 || body[0] != '{' || !utf8.Valid(args) || !json.Valid(args) {
-		return &output.Error{Code: "INVALID_USAGE", Message: "RPC arguments must be a UTF-8 JSON object.", ExitCode: 2}
+		return &output.Error{Code: "INVALID_USAGE", Message: "RPC arguments must be a UTF-8 JSON object. In bash or zsh, wrap the object in single quotes to preserve its double quotes.", ExitCode: 2}
 	}
 	return nil
 }

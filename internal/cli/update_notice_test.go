@@ -38,7 +38,13 @@ func TestUpdateNoticeEligibility(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			options := testOptions(tc.env)
-			options.UserConfigDir = func() (string, error) { return t.TempDir(), nil }
+			dir := t.TempDir()
+			options.UserConfigDir = func() (string, error) { return dir, nil }
+			if tc.name == "rpc action help" {
+				if result := execute(t.Context(), options, "profiles", "create", "work", "--installation-type=cloud"); result.code != 0 {
+					t.Fatalf("create profile: %#v", result)
+				}
+			}
 			if tc.version != "" {
 				options.Build.Version = tc.version
 			}

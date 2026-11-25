@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/datalens-tech/datalens-cli/internal/config"
 )
 
 func TestProfileTokenCommand(t *testing.T) {
@@ -18,14 +20,17 @@ func TestProfileTokenCommand(t *testing.T) {
 		t.Fatal("consulted the environment despite an explicit token or profile command")
 		return ""
 	}
+	resolve := func(ctx context.Context, explicit *string, command []string) (string, error) {
+		return ResolveToken(ctx, explicit, config.Profile{Installation: "yateam", TokenCommand: command}, lookup)
+	}
 	missing := []string{filepath.Join(t.TempDir(), "private-argument")}
 	explicit := "from-flag"
-	got, err := ResolveToken(t.Context(), &explicit, missing, lookup)
+	got, err := resolve(t.Context(), &explicit, missing)
 	if got != explicit || err != nil {
 		t.Fatal("explicit token did not take precedence")
 	}
 	explicit = ""
-	_, err = ResolveToken(t.Context(), &explicit, missing, lookup)
+	_, err = resolve(t.Context(), &explicit, missing)
 	requireCode(t, err, "AUTH_TOKEN_INVALID", 3)
 
 	for _, tc := range []struct{ name, value, code string }{
@@ -38,7 +43,7 @@ func TestProfileTokenCommand(t *testing.T) {
 		{"bare carriage return", "private-output\r", "AUTH_TOKEN_INVALID"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ResolveToken(t.Context(), nil, tokenHelper("echo", tc.value), lookup)
+			got, err := resolve(t.Context(), nil, tokenHelper("echo", tc.value))
 			if tc.code == "" {
 				if err != nil || got != "a$b|c" {
 					t.Fatal("did not read the token from stdout")
@@ -53,18 +58,18 @@ func TestProfileTokenCommand(t *testing.T) {
 	}
 
 	for _, cmd := range [][]string{missing, tokenHelper("fail", "private-argument")} {
-		got, err := ResolveToken(t.Context(), nil, cmd, lookup)
+		got, err := resolve(t.Context(), nil, cmd)
 		requireCode(t, err, "AUTH_TOKEN_COMMAND_FAILED", 3)
 		if got != "" || strings.Contains(err.Error(), "private-") {
 			t.Fatal("returned helper diagnostics, output, or arguments")
 		}
 	}
-	_, err = ResolveToken(t.Context(), nil, tokenHelper("oversized"), lookup)
+	_, err = resolve(t.Context(), nil, tokenHelper("oversized"))
 	requireCode(t, err, "AUTH_TOKEN_INVALID", 3)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
-	_, err = ResolveToken(ctx, nil, tokenHelper("sleep"), lookup)
+	_, err = resolve(ctx, nil, tokenHelper("sleep"))
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want a timeout, got %v", err)
 	}
@@ -73,7 +78,7 @@ func TestProfileTokenCommand(t *testing.T) {
 func TestTokenCommandInheritedStdout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	_, err := ResolveToken(ctx, nil, tokenHelper("spawn"), func(string) string { return "" })
+	_, err := ResolveToken(ctx, nil, config.Profile{TokenCommand: tokenHelper("spawn")}, func(string) string { return "" })
 	requireCode(t, err, "AUTH_TOKEN_COMMAND_FAILED", 3)
 }
 

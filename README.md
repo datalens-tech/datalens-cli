@@ -4,7 +4,7 @@ Call DataLens RPC actions from the terminal and explore their arguments offline.
 
 ## Quick start
 
-Once the first stable release is published, use the command for your platform. Until then, [build from source](#build-from-source).
+Use the command for your platform after the first stable release. To try a published beta, [install a specific version](#install-a-specific-version). You can also [build from source](#build-from-source).
 
 **macOS and Linux**
 
@@ -96,6 +96,22 @@ Exit codes are `0` for success, `1` for runtime failures, `2` for usage or confi
 Set `DATALENS_INSTALL_DIR` or `DATALENS_CONFIG_DIR` to override these locations. Rerun the installer to upgrade to the latest stable release. To install a private release from a checkout, sign in with `gh` and run `sh install.sh` or `.\install.ps1` in PowerShell.
 
 Interactive release builds check for updates at most once a day and print a download link to stderr when an update is available. Stable builds check for stable versions. Beta builds also check for betas. Set `DATALENS_NO_UPDATE_CHECK=1` to disable update checks and notices.
+
+#### Install a specific version
+
+Download the installer from the release you want to test and set `DATALENS_CLI_INSTALL_VERSION` to its tag. For example, once `v0.1.0-beta.1` is published:
+
+```sh
+curl -fsSL https://github.com/datalens-tech/datalens-cli/releases/download/v0.1.0-beta.1/install.sh | DATALENS_CLI_INSTALL_VERSION=v0.1.0-beta.1 sh
+```
+
+```powershell
+$env:DATALENS_CLI_INSTALL_VERSION = 'v0.1.0-beta.1'
+([Net.WebClient]::new()).DownloadString("https://github.com/datalens-tech/datalens-cli/releases/download/$env:DATALENS_CLI_INSTALL_VERSION/install.ps1") | Invoke-Expression
+Remove-Item Env:DATALENS_CLI_INSTALL_VERSION
+```
+
+For a private release, sign in with `gh` and use the same variable with the installer from your checkout.
 
 ### On-premises
 

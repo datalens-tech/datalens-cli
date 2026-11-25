@@ -53,6 +53,7 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
+printf '%s\n' "$url" >> "$ASSETS/requests"
 case "$url" in
     https://github.com/datalens-tech/datalens-cli/releases/latest/download/SHA256SUMS)
         file="$ASSETS/SHA256SUMS" ;;
@@ -116,6 +117,40 @@ if [ -n "$out" ]; then cp "$file" "$out"; else cat "$file"; fi
                     self.assertEqual(config.stat().st_mode & 0o077, 0)
                 self.assertFalse((config / "config.json").exists())
 
+    def test_pinned_release(self):
+        requests = self.assets / "requests"
+        for version in ("0.1.0", "0.2.0-beta.1"):
+            self.release(version)
+            for prefix in ("", "v"):
+                with self.subTest(version=version, prefix=prefix):
+                    self.env["DATALENS_CLI_INSTALL_VERSION"] = prefix + version
+                    requests.write_text("")
+                    self.install()
+                    base = f"https://github.com/datalens-tech/datalens-cli/releases/download/v{version}"
+                    self.assertEqual(requests.read_text().splitlines(), [
+                        f"{base}/SHA256SUMS", f"{base}/datalens_{version}_linux_amd64.tar.gz",
+                    ])
+                    self.assertEqual((self.home / ".local/bin/datalens").read_text(), f"{version} linux_amd64")
+
+    def test_pin_rejects_wrong_manifest_and_invalid_versions(self):
+        self.release("0.2.0")
+        self.env["DATALENS_CLI_INSTALL_VERSION"] = ""
+        self.install()
+        self.env.update(TEST_VERSION="0.2.0-beta.1", DATALENS_CLI_INSTALL_VERSION="v0.2.0-beta.1")
+        requests = self.assets / "requests"
+        requests.write_text("")
+        self.install(success=False)
+        self.assertEqual(requests.read_text().splitlines(), [
+            "https://github.com/datalens-tech/datalens-cli/releases/download/v0.2.0-beta.1/SHA256SUMS",
+        ])
+        self.assertEqual((self.home / ".local/bin/datalens").read_text(), "0.2.0 linux_amd64")
+        requests.unlink()
+        for invalid in ("latest", "01.0.0", "0.1.0-beta.01", "0.1.0\n0.2.0", "v0.1.0/../latest"):
+            with self.subTest(invalid=invalid):
+                self.env["DATALENS_CLI_INSTALL_VERSION"] = invalid
+                self.install(success=False)
+                self.assertFalse(requests.exists())
+
     def test_upgrade_preserves_config_and_failed_download_preserves_binary(self):
         install_dir = self.home / "user's custom bin"
         config_dir = self.home / "custom config"
@@ -165,12 +200,16 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 case "$tag/$asset" in
-    /SHA256SUMS|"v$TEST_VERSION/datalens_${TEST_VERSION}_linux_amd64.tar.gz") cat "$ASSETS/$asset" ;;
+    "${TEST_MANIFEST_TAG:-}/SHA256SUMS"|"v$TEST_VERSION/datalens_${TEST_VERSION}_linux_amd64.tar.gz") cat "$ASSETS/$asset" ;;
     *) exit 1 ;;
 esac
 """)
         self.install()
         self.assertEqual((self.home / ".local/bin/datalens").read_text(), "0.2.0 linux_amd64")
+        self.release("0.3.0-beta.1")
+        self.env.update(TEST_MANIFEST_TAG="v0.3.0-beta.1", DATALENS_CLI_INSTALL_VERSION="0.3.0-beta.1")
+        self.install()
+        self.assertEqual((self.home / ".local/bin/datalens").read_text(), "0.3.0-beta.1 linux_amd64")
 
     def test_linux_xdg_and_unsupported_target(self):
         self.release("0.2.0")

@@ -1,6 +1,16 @@
 & {
     $ErrorActionPreference = 'Stop'
     $repo = 'datalens-tech/datalens-cli'
+    $requestedVersion = $env:DATALENS_CLI_INSTALL_VERSION
+    $tag = ''
+    if ($requestedVersion) {
+        $number = '(?:0|[1-9][0-9]*)'
+        if ($requestedVersion -cnotmatch "^v?(?<version>$number\.$number\.$number(?:-beta\.$number)?)\z") {
+            throw 'DATALENS_CLI_INSTALL_VERSION must be a release version such as 0.1.0 or v0.1.0-beta.1.'
+        }
+        $requestedVersion = $Matches.version
+        $tag = "v$requestedVersion"
+    }
 
     function Get-ReleaseAsset($Name, $Tag, $Destination) {
         $route = if ($Tag) { "download/$Tag" } else { 'latest/download' }
@@ -36,8 +46,8 @@
     $null = [IO.Directory]::CreateDirectory($temp)
     try {
         $manifest = Join-Path $temp 'SHA256SUMS'
-        Get-ReleaseAsset 'SHA256SUMS' '' $manifest
-        $versionPattern = 'v?[0-9]+\.[0-9]+\.[0-9]+(?:\+[0-9A-Za-z.-]+)?'
+        Get-ReleaseAsset 'SHA256SUMS' $tag $manifest
+        $versionPattern = if ($tag) { [regex]::Escape($requestedVersion) } else { 'v?[0-9]+\.[0-9]+\.[0-9]+(?:\+[0-9A-Za-z.-]+)?' }
         $archivePattern = "^datalens_(?<version>${versionPattern})_windows_${arch}\.zip$"
         $archive = $null
         foreach ($line in [IO.File]::ReadLines($manifest)) {

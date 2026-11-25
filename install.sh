@@ -26,13 +26,24 @@ download() {
         return
     fi
     if [ -s "$tmp/curl-error" ]; then cat "$tmp/curl-error" >&2; fi
-    fail "Could not download $asset. Check that a stable release is published and accessible. For a private repository, sign in with gh."
+    fail "Could not download $asset from ${tag:-the latest stable release}. For a private repository, sign in with gh."
 }
 
 main() {
     [ "$#" -eq 0 ] || fail 'Usage: sh install.sh (set DATALENS_INSTALL_DIR to choose the binary directory)'
     repo=datalens-tech/datalens-cli
     releases="https://github.com/$repo/releases"
+    requested=${DATALENS_CLI_INSTALL_VERSION:-}
+    manifest_tag=''
+    if [ -n "$requested" ]; then
+        LC_ALL=C awk 'BEGIN {
+            n = "(0|[1-9][0-9]*)"
+            pattern = "^v?" n "[.]" n "[.]" n "(-beta[.]" n ")?$"
+            exit !(ENVIRON["DATALENS_CLI_INSTALL_VERSION"] ~ pattern)
+        }' || fail 'DATALENS_CLI_INSTALL_VERSION must be a release version such as 0.1.0 or 0.1.0-beta.1 (optional v prefix).'
+        requested=${requested#v}
+        manifest_tag=v$requested
+    fi
     system=$(uname -s)
     machine=$(uname -m)
     case "$system" in
@@ -73,20 +84,21 @@ main() {
     stage=''
     trap 'rm -rf "$tmp"; if [ -n "$stage" ]; then rm -f "$stage"; fi' EXIT
     trap 'exit 1' HUP INT TERM
-    download SHA256SUMS '' "$tmp/manifest"
-    entry=$(LC_ALL=C awk -v target="${os}_${arch}" -v ext="$ext" '
+    download SHA256SUMS "$manifest_tag" "$tmp/manifest"
+    entry=$(LC_ALL=C awk -v target="${os}_${arch}" -v ext="$ext" -v requested="$requested" '
         BEGIN {
             suffix = (ext == "zip" ? "[.]zip" : "[.]tar[.]gz")
             version = "v?[0-9]+[.][0-9]+[.][0-9]+([+][0-9A-Za-z.-]+)?"
             pattern = "^datalens_" version "_" target suffix "$"
+            pinned = "datalens_" requested "_" target "." ext
         }
-        $2 ~ pattern {
+        (requested == "" ? $2 ~ pattern : $2 == pinned) {
             if (NF != 2 || length($1) != 64 || $1 ~ /[^0-9a-fA-F]/) exit 1
             count++
             entry = tolower($1) " " $2
         }
         END { if (count != 1) exit 1; print entry }
-    ' "$tmp/manifest") || fail "Expected exactly one stable $os/$arch archive in SHA256SUMS."
+    ' "$tmp/manifest") || fail "Expected exactly one $os/$arch archive for ${manifest_tag:-the latest stable release} in SHA256SUMS."
     checksum=${entry%% *}
     archive=${entry#* }
     version=${archive#datalens_}

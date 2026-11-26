@@ -54,12 +54,16 @@ func TestSetupCreatesActiveProfile(t *testing.T) {
 		},
 		{
 			name: "On-premises command", answers: "3\n2\nmissing-helper \"an argument\"\nhttps://example.org/dl\ncorp\nyes\n",
-			profile: "corp", installation: "onpremise-standalone", apiEndpoint: "https://example.org/dl/api",
+			profile: "corp", installation: "on-premises", apiEndpoint: "https://example.org/dl/api",
 			authentication: `missing-helper "an argument"`, command: []string{"missing-helper", "an argument"},
 		},
 		{
-			name: "Stackland with retries", answers: "9\n4\n9\n1\nhttp://example.org\nhttps://stack.example.org\nbad/name\nstack\nyes\n",
-			profile: "stack", installation: "stackland", apiEndpoint: "https://stack.example.org/api", authentication: "DATALENS_TOKEN or DATALENS_TOKEN_PATH",
+			name: "Stackland with retries", answers: "9\n4\n9\n1\nhttp://example.org\nhttps://stack.example.org\nstack-org\nbad/name\nstack\nyes\n",
+			profile: "stack", installation: "stackland", apiEndpoint: "https://stack.example.org/api", org: "stack-org", authentication: "DATALENS_TOKEN or DATALENS_TOKEN_PATH",
+		},
+		{
+			name: "Stackland organization from environment", answers: "4\n1\nhttps://stack.example.org/dl\n\n\nyes\n",
+			profile: "stackland", installation: "stackland", apiEndpoint: "https://stack.example.org/dl/api", authentication: "DATALENS_TOKEN or DATALENS_TOKEN_PATH",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -68,6 +72,9 @@ func TestSetupCreatesActiveProfile(t *testing.T) {
 			transcript := result.stdout + result.stderr
 			if result.code != 0 || strings.Contains(transcript, "test-token-should-stay-private") {
 				t.Fatalf("setup: %#v", result)
+			}
+			if offered := strings.Contains(result.stderr, "Service account (RSA private key file)"); offered != (tc.installation == "on-premises") {
+				t.Fatalf("unexpected service-account option for %s: %t", tc.installation, offered)
 			}
 			doc, err := store.Load()
 			if err != nil {
@@ -89,12 +96,12 @@ func TestSetupCreatesActiveProfile(t *testing.T) {
 				"API endpoint: " + tc.apiEndpoint,
 				"Authentication:",
 			}
-			if tc.installation == "cloud" {
+			if tc.installation == "cloud" || tc.installation == "stackland" {
 				org := tc.org
 				if org == "" {
 					org = "from DATALENS_ORG_ID"
 				}
-				fields = append(fields, "Cloud organization: "+org)
+				fields = append(fields, "Organization ID: "+org)
 			}
 			for _, field := range fields {
 				if !strings.Contains(preview, "\n"+field) {
@@ -106,6 +113,45 @@ func TestSetupCreatesActiveProfile(t *testing.T) {
 				t.Errorf("expected authentication %q, got %q", tc.authentication, auth)
 			}
 		})
+	}
+}
+
+func TestSetupServiceAccount(t *testing.T) {
+	t.Chdir(t.TempDir())
+	const keyFile = "rsa key.pem"
+	const contents = "private file contents"
+	if err := os.WriteFile(keyFile, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	keyPath, err := filepath.Abs(keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, confirm := range []string{"n", "y"} {
+		options, store := setupOptions(t, "3\n3\n\nsvc\nkid\n"+keyFile+"\nhttps://bi.example.org\n\n"+confirm+"\n")
+		result := execute(t.Context(), options, "setup")
+		if result.code != 0 || strings.Contains(result.stdout+result.stderr, contents) {
+			t.Fatalf("setup: %#v", result)
+		}
+		preview, _, ok := strings.Cut(result.stderr, setupConfirmation)
+		if !ok || !strings.Contains(preview, "Service account ID: svc\nKey ID: kid\nPrivate key file: "+keyPath+"\n") {
+			t.Fatalf("service account missing from confirmation: %s", preview)
+		}
+		doc, err := store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if confirm == "n" {
+			if len(doc.Profiles) != 0 {
+				t.Fatal("cancelled setup saved a profile")
+			}
+			continue
+		}
+		got := doc.Profiles["on-premises"].ServiceAccount
+		want := config.ServiceAccount{ID: "svc", KeyID: "kid", PrivateKeyFile: keyPath}
+		if got == nil || *got != want {
+			t.Fatalf("service account = %#v, want %#v", got, want)
+		}
 	}
 }
 

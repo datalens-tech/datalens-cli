@@ -135,14 +135,14 @@ func (a *app) call(cmd *cobra.Command, profile config.Profile, action string, ar
 	if err := rpchelp.ValidateArgs(action, profile.Installation, a.profile, args); err != nil {
 		return err
 	}
-	if profile.Installation == "cloud" && profile.OrganizationID == "" {
+	if profile.RequiresOrganization() && profile.OrganizationID == "" {
 		profile.OrganizationID = a.options.LookupEnv("DATALENS_ORG_ID")
 	}
 	var explicitToken *string
 	if cmd.Flags().Changed("auth-token") {
 		explicitToken = &a.authToken
 	}
-	token, err := api.ResolveToken(cmd.Context(), explicitToken, profile, a.options.LookupEnv)
+	token, err := api.ResolveToken(cmd.Context(), a.options.Transport, explicitToken, profile, a.options.LookupEnv)
 	if err != nil {
 		return err
 	}

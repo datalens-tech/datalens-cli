@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -16,12 +17,15 @@ import (
 
 const maxTokenSize = 64 << 10
 
-func ResolveToken(ctx context.Context, explicit *string, profile config.Profile, lookupEnv func(string) string) (string, error) {
+func ResolveToken(ctx context.Context, transport http.RoundTripper, explicit *string, profile config.Profile, lookupEnv func(string) string) (string, error) {
 	if explicit != nil {
 		return validateToken(*explicit)
 	}
 	if len(profile.TokenCommand) > 0 {
 		return runTokenCommand(ctx, profile.TokenCommand)
+	}
+	if profile.ServiceAccount != nil {
+		return exchangeServiceAccountToken(ctx, transport, profile)
 	}
 	tokenSources := "DATALENS_TOKEN or DATALENS_TOKEN_PATH"
 	if profile.Installation == "yateam" {

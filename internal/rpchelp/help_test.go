@@ -13,7 +13,7 @@ import (
 func TestEditionSpecificDescriptions(t *testing.T) {
 	for _, tc := range []struct{ installation, action, want, absent string }{
 		{"cloud", "listSharedEntryAccessBindings", "specified common object", "specified shared entry"},
-		{"onpremise-standalone", "listSharedEntryAccessBindings", "specified shared entry", "specified common object"},
+		{"on-premises", "listSharedEntryAccessBindings", "specified shared entry", "specified common object"},
 		{"stackland", "getTenantDetails", "No bundled documentation", "current tenant state"},
 		{"yateam", "getEditorChartSecrets", "Yandex Team API reference", "No bundled documentation"},
 		{"cloud", "getEditorChartSecrets", "No bundled documentation", "Required:"},

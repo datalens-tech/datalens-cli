@@ -21,7 +21,7 @@ func TestProfileTokenCommand(t *testing.T) {
 		return ""
 	}
 	resolve := func(ctx context.Context, explicit *string, command []string) (string, error) {
-		return ResolveToken(ctx, explicit, config.Profile{Installation: "yateam", TokenCommand: command}, lookup)
+		return ResolveToken(ctx, nil, explicit, config.Profile{Installation: "yateam", TokenCommand: command}, lookup)
 	}
 	missing := []string{filepath.Join(t.TempDir(), "private-argument")}
 	explicit := "from-flag"
@@ -78,7 +78,7 @@ func TestProfileTokenCommand(t *testing.T) {
 func TestTokenCommandInheritedStdout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	_, err := ResolveToken(ctx, nil, config.Profile{TokenCommand: tokenHelper("spawn")}, func(string) string { return "" })
+	_, err := ResolveToken(ctx, nil, nil, config.Profile{TokenCommand: tokenHelper("spawn")}, func(string) string { return "" })
 	requireCode(t, err, "AUTH_TOKEN_COMMAND_FAILED", 3)
 }
 

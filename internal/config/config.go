@@ -2,6 +2,7 @@ package config
 
 import (
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,11 +23,22 @@ const (
 )
 
 type Profile struct {
-	Installation   string   `json:"installationType"`
-	Endpoint       string   `json:"endpoint"`
-	APIEndpoint    string   `json:"apiEndpoint"`
-	OrganizationID string   `json:"organizationId,omitempty"`
-	TokenCommand   []string `json:"tokenCommand,omitempty"`
+	Installation   string          `json:"installationType"`
+	Endpoint       string          `json:"endpoint"`
+	APIEndpoint    string          `json:"apiEndpoint"`
+	OrganizationID string          `json:"organizationId,omitempty"`
+	TokenCommand   []string        `json:"tokenCommand,omitempty"`
+	ServiceAccount *ServiceAccount `json:"serviceAccount,omitempty"`
+}
+
+type ServiceAccount struct {
+	ID             string `json:"id"`
+	KeyID          string `json:"keyId"`
+	PrivateKeyFile string `json:"privateKeyFile"`
+}
+
+func (p Profile) RequiresOrganization() bool {
+	return p.Installation == "cloud" || p.Installation == "stackland"
 }
 
 type Document struct {
@@ -70,9 +82,9 @@ func NormalizeProfile(p Profile) (Profile, error) {
 	p.OrganizationID = strings.TrimSpace(p.OrganizationID)
 
 	switch p.Installation {
-	case "", "cloud", "yateam", "onpremise-standalone", "stackland":
+	case "", "cloud", "yateam", "on-premises", "stackland":
 	default:
-		return Profile{}, failure("PROFILE_INVALID", "Installation type must be cloud, yateam, onpremise-standalone, or stackland.")
+		return Profile{}, failure("PROFILE_INVALID", "Installation type must be cloud, yateam, on-premises, or stackland.")
 	}
 
 	if p.Endpoint == "" {
@@ -108,8 +120,29 @@ func NormalizeProfile(p Profile) (Profile, error) {
 	if knownType != "" && p.Installation != knownType {
 		return Profile{}, failure("PROFILE_INVALID", "The installation type does not match the UI endpoint.")
 	}
-	if p.Installation != "cloud" && p.OrganizationID != "" {
-		return Profile{}, failure("PROFILE_INVALID", "Organization IDs are supported only for Cloud profiles.")
+	if !p.RequiresOrganization() && p.OrganizationID != "" {
+		return Profile{}, failure("PROFILE_INVALID", "Organization IDs are supported only for Cloud and Stackland profiles.")
+	}
+	if p.ServiceAccount != nil {
+		if p.Installation != "on-premises" {
+			return Profile{}, failure("PROFILE_INVALID", "Service account keys are supported only for on-premises profiles.")
+		}
+		if p.TokenCommand != nil {
+			return Profile{}, failure("PROFILE_INVALID", "Choose either a service account key or --token-cmd for this profile.")
+		}
+		account := *p.ServiceAccount
+		for _, value := range []string{account.ID, account.KeyID, account.PrivateKeyFile} {
+			if strings.TrimSpace(value) == "" || !utf8.ValidString(value) || strings.ContainsFunc(value, unicode.IsControl) {
+				return Profile{}, failure("PROFILE_INVALID", "Provide --service-account-id, --key-id, and --private-key-file together, with nonempty values and no control characters.")
+			}
+		}
+		account.ID = strings.TrimSpace(account.ID)
+		account.KeyID = strings.TrimSpace(account.KeyID)
+		account.PrivateKeyFile, err = filepath.Abs(account.PrivateKeyFile)
+		if err != nil {
+			return Profile{}, failure("PROFILE_INVALID", "Cannot resolve the private key file path.")
+		}
+		p.ServiceAccount = &account
 	}
 	if p.APIEndpoint == "" {
 		p.APIEndpoint = api

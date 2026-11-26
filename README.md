@@ -1,6 +1,6 @@
 # DataLens CLI
 
-Call DataLens RPC actions from the terminal and explore their arguments offline. The CLI supports Yandex Cloud, Yandex Team, and Enterprise installations.
+Call DataLens RPC actions from the terminal and explore their arguments offline. The CLI supports Yandex Cloud, Yandex Team, and on-premises installations, including Stackland.
 
 ## Quick start
 
@@ -56,7 +56,8 @@ A profile stores the installation type and endpoints. Create your first profile 
 | --- | --- | --- | --- |
 | `cloud` | `https://datalens.ru` | `https://api.datalens.tech` | IAM token and organization ID |
 | `yateam` | `https://datalens.yandex-team.ru` | `https://api.datalens.yandex.net` | OAuth token |
-| `onpremise-standalone`, `stackland` | Supply `--endpoint` | UI address + `/api` | Bearer token |
+| `on-premises` | Supply `--endpoint` | UI address + `/api` | Bearer token or service account key |
+| `stackland` | Supply `--endpoint` | UI address + `/api` | Bearer token and organization ID |
 
 For scripts, create the profile with flags. Use `profiles activate` to switch between saved profiles. For a custom UI address, supply the installation type. The API address defaults to the UI address plus `/api`.
 
@@ -65,12 +66,12 @@ datalens profiles create work --installation-type=cloud --organization=your-orga
 datalens profiles activate work
 ```
 
-Profile selection order is `--profile`, `DATALENS_PROFILE`, then the active profile. Cloud uses the organization saved with `--organization`, or `DATALENS_ORG_ID` if none was saved.
+Profile selection order is `--profile`, `DATALENS_PROFILE`, then the active profile. Cloud and Stackland use the organization saved with `--organization`, or `DATALENS_ORG_ID` if none was saved.
 
 The first configured source supplies the token.
 
 1. `--auth-token` for the current call.
-2. The selected profile’s `--token-cmd`.
+2. The selected profile’s token command or service account key.
 3. `DATALENS_OAUTH_TOKEN` for Yandex Team profiles only.
 4. `DATALENS_TOKEN`.
 5. The file named by `DATALENS_TOKEN_PATH`.
@@ -115,11 +116,27 @@ For a private release, sign in with `gh` and use the same variable with the inst
 
 ### On-premises
 
-Set `DATALENS_TOKEN` to your installation’s bearer token. Create a profile with the UI address of your deployment. For a Stackland deployment, use `--installation-type=stackland`.
+If you have an access token, set `DATALENS_TOKEN` and create a profile with your installation's UI address.
 
 ```sh
-datalens profiles create corp --installation-type=onpremise-standalone --endpoint=https://datalens.example.com
+datalens profiles create corp --installation-type=on-premises --endpoint=https://datalens.example.com
 datalens rpc getWorkbook '{"workbookId":"your-workbook-id"}' --profile=corp
+```
+
+For an on-premises service account, provide its ID, key ID, and RSA private key file:
+
+```sh
+datalens profiles create automation --installation-type=on-premises \
+  --endpoint=https://datalens.example.com --service-account-id=my-service-account \
+  --key-id=my-key-id --private-key-file=/path/to/private-key.pem
+```
+
+The profile stores the IDs and the file path. When you call an action, the CLI reads the PEM file locally, signs a five-minute JWT, and exchanges it for a bearer token at `<API endpoint>/rpc/exchangeServiceAccountToken`. Use `--api-endpoint` if your API is served at a different address.
+
+Stackland also requires an organization ID. The CLI sends it in `x-dl-org-id` with each request to your deployment.
+
+```sh
+datalens profiles create stack --installation-type=stackland --endpoint=https://stack.example.com --organization=your-organization-id
 ```
 
 ### Yandex Team
@@ -153,7 +170,7 @@ Run `make check` for formatting and vet, `make test` for Go tests with the race 
 
 ### Refresh the RPC catalogs
 
-Regenerate Cloud and Enterprise from the SDK snapshots matching the CLI’s pinned API version. To include Yandex Team, append `--yateam-spec /path/to/yateam.json` to the generator command. When changing the pinned API version, refresh all three catalogs together. Update the snapshot link when its source revision changes. [Public SDK snapshots](https://github.com/datalens-tech/datalens-sdk/tree/6e693fa5b40b3cb463a9eb2fb0c5c4a09bae9506/spec)
+Regenerate the Cloud and on-premises catalogs from the SDK snapshots matching the CLI’s pinned API version. To include Yandex Team, append `--yateam-spec /path/to/yateam.json` to the generator command. When changing the pinned API version, refresh all three catalogs together. Update the snapshot link when its source revision changes. [Public SDK snapshots](https://github.com/datalens-tech/datalens-sdk/tree/6e693fa5b40b3cb463a9eb2fb0c5c4a09bae9506/spec)
 
 ```sh
 python3 scripts/generate_rpc_help.py ../datalens-sdk/spec

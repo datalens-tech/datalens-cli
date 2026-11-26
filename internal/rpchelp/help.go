@@ -53,8 +53,8 @@ func reference(installation string) (string, catalog, error) {
 	switch installation {
 	case "cloud":
 		edition, load = "Cloud", cloud
-	case "onpremise-standalone", "stackland":
-		edition, load = "Enterprise", enterprise
+	case "on-premises", "stackland":
+		edition, load = "On-premises", enterprise
 	case "yateam":
 		edition, load = "Yandex Team", yateam
 	default:

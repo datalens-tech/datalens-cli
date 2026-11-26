@@ -2,7 +2,12 @@ package cli_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +22,54 @@ import (
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestRPCUsesOnPremisesServiceAccount(t *testing.T) {
+	dir := t.TempDir()
+	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(dir, "config"), "DATALENS_TOKEN": "env-token"})
+	keyPath := filepath.Join(dir, "account.pem")
+	run := func(args ...string) {
+		t.Helper()
+		if result := execute(t.Context(), options, args...); result.code != 0 {
+			t.Fatalf("%v: %s", args, result.stderr)
+		}
+	}
+	run("profiles", "create", "job", "--installation-type=on-premises", "--endpoint=https://ui.example",
+		"--api-endpoint=https://api.example/test", "--service-account-id=sa", "--key-id=key", "--private-key-file="+keyPath)
+	run("rpc", "getWorkbook", "--help")
+
+	enc := base64.RawURLEncoding
+	token := enc.EncodeToString([]byte(`{"alg":"RS256"}`)) + "." + enc.EncodeToString([]byte(`{"exp":4102444800}`)) + ".c2ln"
+	var requests []string
+	wantToken := "explicit"
+	options.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req.URL.String())
+		body := "{}"
+		switch req.URL.String() {
+		case "https://api.example/test/rpc/exchangeServiceAccountToken":
+			body = `{"accessToken":"` + token + `"}`
+		case "https://api.example/test/rpc/getWorkbook":
+			if req.Header.Get("Authorization") != "Bearer "+wantToken {
+				t.Fatal("unexpected RPC authorization")
+			}
+		default:
+			t.Fatalf("unexpected request URL %s", req.URL)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	run("rpc", "getWorkbook", `{"workbookId":"wb"}`, "--auth-token=explicit")
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	wantToken = token
+	run("rpc", "getWorkbook", `{"workbookId":"wb"}`)
+	if len(requests) != 3 || requests[1] != "https://api.example/test/rpc/exchangeServiceAccountToken" {
+		t.Fatalf("unexpected request sequence: %v", requests)
+	}
+}
 
 func TestRPCValidatesBeforeAuthentication(t *testing.T) {
 	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
@@ -321,7 +374,7 @@ func TestRPCActionHelpSelectsInstallation(t *testing.T) {
 	options := testOptions(env)
 	for _, args := range [][]string{
 		{"profiles", "create", "team", "--installation-type=cloud"},
-		{"profiles", "create", "work", "--installation-type=onpremise-standalone", "--endpoint=https://work.example"},
+		{"profiles", "create", "work", "--installation-type=on-premises", "--endpoint=https://work.example"},
 		{"profiles", "create", "internal", "--installation-type=yateam"},
 		{"profiles", "create", "stack", "--installation-type=stackland", "--endpoint=https://stack.example"},
 		{"profiles", "activate", "work"},
@@ -339,10 +392,10 @@ func TestRPCActionHelpSelectsInstallation(t *testing.T) {
 		absent                       []string
 	}{
 		{"active", "", "", "specified shared entry", []string{"Cloud API reference", "specified common object"}},
-		{"environment", "team", "", "specified common object", []string{"Enterprise API reference", "specified shared entry"}},
+		{"environment", "team", "", "specified common object", []string{"On-premises API reference", "specified shared entry"}},
 		{"explicit", "team", "--profile=work", "specified shared entry", []string{"Cloud API reference", "specified common object"}},
 		{"stackland", "", "--profile=stack", "specified shared entry", []string{"Cloud API reference", "specified common object"}},
-		{"yateam", "", "--profile=internal", "Yandex Team API reference", []string{"Cloud API reference", "Enterprise API reference"}},
+		{"yateam", "", "--profile=internal", "Yandex Team API reference", []string{"Cloud API reference", "On-premises API reference"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env["DATALENS_PROFILE"] = tc.envProfile
@@ -394,9 +447,9 @@ func TestSchemaShowUsesProfileAndWritesOnlyJSON(t *testing.T) {
 }
 
 func TestTenantSettingsRequiresCloudProfile(t *testing.T) {
-	env := map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")}
+	env := map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config"), "DATALENS_ORG_ID": "stack-org"}
 	options := testOptions(env)
-	for _, installation := range []string{"yateam", "onpremise-standalone", "stackland"} {
+	for _, installation := range []string{"yateam", "on-premises", "stackland"} {
 		args := []string{"profiles", "create", installation, "--installation-type=" + installation, "--endpoint=https://service.example"}
 		if result := execute(t.Context(), options, args...); result.code != 0 {
 			t.Fatalf("create: %#v", result)
@@ -405,8 +458,8 @@ func TestTenantSettingsRequiresCloudProfile(t *testing.T) {
 		assertFailure(t, result, 2, "UNSUPPORTED_INSTALLATION")
 	}
 	options.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL.Path != "/api/rpc/getTenantDetails" {
-			t.Errorf("unexpected RPC path %q", req.URL.Path)
+		if req.URL.String() != "https://service.example/api/rpc/getTenantDetails" || req.Header.Get("x-dl-org-id") != "stack-org" {
+			t.Errorf("unexpected Stackland request to %s with organization %q", req.URL, req.Header.Get("x-dl-org-id"))
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{}"))}, nil
 	})

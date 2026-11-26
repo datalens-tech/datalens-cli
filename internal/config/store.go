@@ -28,6 +28,12 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*p = Profile(stored.fields)
+	if p.ServiceAccount != nil && !filepath.IsAbs(p.ServiceAccount.PrivateKeyFile) {
+		return failure("CONFIG_INVALID", "The private key file path in a saved profile must be absolute.")
+	}
+	if p.Installation == "onpremise-standalone" {
+		p.Installation = "on-premises"
+	}
 	return nil
 }
 

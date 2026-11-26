@@ -78,7 +78,7 @@ func TestPersistenceAndProfileIsolation(t *testing.T) {
 
 func TestResolvePrecedenceAndNoFallback(t *testing.T) {
 	doc := Document{Version: SchemaVersion, CurrentProfile: "saved", Profiles: map[string]Profile{
-		"flag": {Installation: "yateam"}, "env": {Installation: "cloud", OrganizationID: "org"}, "saved": {Installation: "onpremise-standalone", Endpoint: "https://example.com"},
+		"flag": {Installation: "yateam"}, "env": {Installation: "cloud", OrganizationID: "org"}, "saved": {Installation: "on-premises", Endpoint: "https://example.com"},
 	}}
 	for _, tc := range []struct{ flag, env, want string }{{"flag", "env", "flag"}, {"", "env", "env"}, {"", "", "saved"}} {
 		name, p, err := Resolve(doc, tc.flag, tc.env)
@@ -105,7 +105,7 @@ func TestNormalizeProfile(t *testing.T) {
 	for _, p := range []Profile{
 		{Installation: "yateam"},
 		{Installation: "cloud", OrganizationID: "org"},
-		{Installation: "onpremise-standalone", Endpoint: "https://example.com:8443/api"},
+		{Installation: "on-premises", Endpoint: "https://example.com:8443/api"},
 		{Installation: "stackland", Endpoint: "https://[::1]/api"},
 	} {
 		got, err := NormalizeProfile(p)
@@ -116,7 +116,7 @@ func TestNormalizeProfile(t *testing.T) {
 	for _, p := range []Profile{
 		{Installation: "unknown"}, {Endpoint: "https://custom.example.com"}, {Endpoint: teamUI, Installation: "cloud"},
 		{Endpoint: "https://datalens.ru:8443/."}, {Endpoint: teamUI + "/workbooks", Installation: "cloud"},
-		{Installation: "onpremise-standalone"}, {Installation: "stackland"},
+		{Installation: "on-premises"}, {Installation: "stackland"},
 		{Installation: "yateam", OrganizationID: "org"},
 		{Installation: "cloud", OrganizationID: "org\r\nheader: value"},
 		{TokenCommand: []string{}}, {TokenCommand: []string{"", "iam"}}, {TokenCommand: []string{"  "}},
@@ -127,7 +127,7 @@ func TestNormalizeProfile(t *testing.T) {
 		requireCode(t, err, "PROFILE_INVALID")
 	}
 	for _, endpoint := range []string{"http://example.com", "https://", "//example.com", "https://user:secret@example.com", "https://example.com?token=secret", "https://example.com?", "https://example.com#fragment", "https://example.com#", "https://example.com:99999", "https://example.com:0", "https://example.com:", "https://example.com:invalid"} {
-		for _, p := range []Profile{{Installation: "onpremise-standalone", Endpoint: endpoint}, {APIEndpoint: endpoint}} {
+		for _, p := range []Profile{{Installation: "on-premises", Endpoint: endpoint}, {APIEndpoint: endpoint}} {
 			_, err := NormalizeProfile(p)
 			requireCode(t, err, "PROFILE_INVALID")
 			if strings.Contains(err.Error(), "secret") {
@@ -150,7 +150,7 @@ func TestResolveEndpoints(t *testing.T) {
 		{Profile{Endpoint: "https://DATALENS.YANDEX-TEAM.RU:443/"}, "yateam", teamUI, teamAPI},
 		{Profile{Endpoint: cloudUI + "/workbooks", APIEndpoint: "https://override.example.com/v1/"}, "cloud", cloudUI + "/workbooks", "https://override.example.com/v1"},
 		{Profile{Installation: "stackland", Endpoint: "https://datalens.ru:8443/prefix"}, "stackland", "https://datalens.ru:8443/prefix", "https://datalens.ru:8443/prefix/api"},
-		{Profile{Installation: "onpremise-standalone", Endpoint: "https://corp.example.com:8443/prefix/"}, "onpremise-standalone", "https://corp.example.com:8443/prefix", "https://corp.example.com:8443/prefix/api"},
+		{Profile{Installation: "on-premises", Endpoint: "https://corp.example.com:8443/prefix/"}, "on-premises", "https://corp.example.com:8443/prefix", "https://corp.example.com:8443/prefix/api"},
 		{Profile{Installation: "stackland", Endpoint: "https://[FE80::A%25Eth0]:443/prefix/", APIEndpoint: "https://[FE80::B%25WiFi]:8443/"}, "stackland", "https://[fe80::a%25Eth0]/prefix", "https://[fe80::b%25WiFi]:8443"},
 		{Profile{Installation: "stackland", Endpoint: "https://corp.example.com", APIEndpoint: "https://api.corp.example.com"}, "stackland", "https://corp.example.com", "https://api.corp.example.com"},
 	} {
@@ -213,6 +213,21 @@ func TestLoadLegacyActiveProfile(t *testing.T) {
 		if err != nil || string(content) != raw {
 			t.Fatalf("loading legacy configuration modified it: %v", err)
 		}
+	}
+}
+
+func TestLoadRenamedOnPremisesProfile(t *testing.T) {
+	s := testStore(t)
+	if err := os.Mkdir(s.Dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"version":2,"currentProfile":"corp","profiles":{"corp":{"installationType":"onpremise-standalone","endpoint":"https://bi.example.com"}}}`
+	if err := os.WriteFile(filepath.Join(s.Dir, "config.json"), []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := s.Load()
+	if err != nil || doc.CurrentProfile != "corp" || doc.Profiles["corp"].Installation != "on-premises" {
+		t.Fatalf("load legacy profile: %+v, %v", doc, err)
 	}
 }
 

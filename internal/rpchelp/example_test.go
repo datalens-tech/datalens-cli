@@ -48,7 +48,7 @@ func TestMinimalExampleArguments(t *testing.T) {
 }
 
 func TestBundledMinimalExamplesValidate(t *testing.T) {
-	for _, installation := range []string{"cloud", "onpremise-standalone", "yateam"} {
+	for _, installation := range []string{"cloud", "on-premises", "yateam"} {
 		_, c, err := reference(installation)
 		if err != nil {
 			t.Fatal(err)

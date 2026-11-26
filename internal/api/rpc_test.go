@@ -28,7 +28,7 @@ func TestResolveToken(t *testing.T) {
 	explicit := "from-flag"
 	check := func(flag *string, want string) {
 		t.Helper()
-		got, err := ResolveToken(t.Context(), flag, profile, lookup)
+		got, err := ResolveToken(t.Context(), nil, flag, profile, lookup)
 		if err != nil || got != want {
 			t.Fatalf("got %q, %v; want %q", got, err, want)
 		}
@@ -37,10 +37,10 @@ func TestResolveToken(t *testing.T) {
 	check(&explicit, "from-flag")
 	check(nil, "from-oauth")
 	explicit = ""
-	_, err := ResolveToken(t.Context(), &explicit, profile, lookup)
+	_, err := ResolveToken(t.Context(), nil, &explicit, profile, lookup)
 	requireCode(t, err, "AUTH_TOKEN_INVALID", 3)
 	env["DATALENS_OAUTH_TOKEN"] = "invalid token"
-	_, err = ResolveToken(t.Context(), nil, profile, lookup)
+	_, err = ResolveToken(t.Context(), nil, nil, profile, lookup)
 	requireCode(t, err, "AUTH_TOKEN_INVALID", 3)
 	delete(env, "DATALENS_OAUTH_TOKEN")
 	check(nil, "from-env")
@@ -49,20 +49,20 @@ func TestResolveToken(t *testing.T) {
 	if err := os.WriteFile(path, []byte("first\nsecond\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = ResolveToken(t.Context(), nil, profile, lookup)
+	_, err = ResolveToken(t.Context(), nil, nil, profile, lookup)
 	requireCode(t, err, "AUTH_TOKEN_INVALID", 3)
 	env["DATALENS_TOKEN_PATH"] = filepath.Dir(path)
-	_, err = ResolveToken(t.Context(), nil, profile, lookup)
+	_, err = ResolveToken(t.Context(), nil, nil, profile, lookup)
 	requireCode(t, err, "AUTH_TOKEN_FILE_INVALID", 2)
 	delete(env, "DATALENS_TOKEN_PATH")
-	_, err = ResolveToken(t.Context(), nil, profile, lookup)
+	_, err = ResolveToken(t.Context(), nil, nil, profile, lookup)
 	requireCode(t, err, "AUTH_TOKEN_REQUIRED", 3)
 	if !strings.Contains(err.Error(), "DATALENS_OAUTH_TOKEN") {
 		t.Fatal("missing YaTeam token hint")
 	}
 	env["DATALENS_OAUTH_TOKEN"] = "from-oauth"
-	for _, installation := range []string{"cloud", "onpremise-standalone", "stackland"} {
-		_, err := ResolveToken(t.Context(), nil, config.Profile{Installation: installation}, lookup)
+	for _, installation := range []string{"cloud", "on-premises", "stackland"} {
+		_, err := ResolveToken(t.Context(), nil, nil, config.Profile{Installation: installation}, lookup)
 		requireCode(t, err, "AUTH_TOKEN_REQUIRED", 3)
 		if strings.Contains(err.Error(), "DATALENS_OAUTH_TOKEN") {
 			t.Errorf("unexpected YaTeam token hint for %s", installation)
@@ -74,8 +74,8 @@ func TestRPCInstallationHeadersAndPayload(t *testing.T) {
 	for _, test := range []struct{ installation, scheme, org string }{
 		{"cloud", "Bearer", "test-org"},
 		{"yateam", "OAuth", ""},
-		{"onpremise-standalone", "Bearer", ""},
-		{"stackland", "Bearer", ""},
+		{"on-premises", "Bearer", ""},
+		{"stackland", "Bearer", "test-org"},
 	} {
 		t.Run(test.installation, func(t *testing.T) {
 			const args = `{"id":9007199254740993}`
@@ -87,7 +87,8 @@ func TestRPCInstallationHeadersAndPayload(t *testing.T) {
 					t.Error("unexpected auth header")
 				}
 				if r.Header.Get("x-dl-org-id") != test.org || r.Header.Get("x-dl-api-version") != "3" ||
-					r.Header.Get("Content-Type") != "application/json" || !strings.HasPrefix(r.UserAgent(), "datalens-cli/") {
+					r.Header.Get("Content-Type") != "application/json" || r.Header.Get("Accept") != "application/json" ||
+					!strings.HasPrefix(r.UserAgent(), "datalens-cli/") {
 					t.Error("unexpected request headers")
 				}
 				body, err := io.ReadAll(r.Body)
@@ -98,6 +99,12 @@ func TestRPCInstallationHeadersAndPayload(t *testing.T) {
 			}))
 			defer srv.Close()
 			p := config.Profile{Installation: test.installation, APIEndpoint: srv.URL + "/custom/api/", Endpoint: srv.URL, OrganizationID: test.org}
+			if test.org != "" {
+				missingOrg := p
+				missingOrg.OrganizationID = ""
+				_, err := Call(t.Context(), srv.Client().Transport, missingOrg, "fake-token", "getDetails", json.RawMessage(args))
+				requireCode(t, err, "ORGANIZATION_REQUIRED", 2)
+			}
 			res, err := Call(t.Context(), srv.Client().Transport, p, "fake-token", "getDetails", json.RawMessage(args))
 			if err != nil || string(res) != "[9007199254740993]" {
 				t.Fatalf("got %s, %v", res, err)
@@ -137,7 +144,7 @@ func TestRPCErrorHandling(t *testing.T) {
 			w.WriteHeader(tc.status)
 			io.WriteString(w, tc.body)
 		}))
-		p := config.Profile{Installation: "onpremise-standalone", Endpoint: srv.URL, APIEndpoint: srv.URL}
+		p := config.Profile{Installation: "on-premises", Endpoint: srv.URL, APIEndpoint: srv.URL}
 		_, err := Call(t.Context(), srv.Client().Transport, p, "fake-token", "test", json.RawMessage("{}"))
 		srv.Close()
 		requireCode(t, err, tc.code, tc.exit)
@@ -158,7 +165,7 @@ func TestRPCCancelDuringResponse(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
-	p := config.Profile{Installation: "onpremise-standalone", Endpoint: srv.URL, APIEndpoint: srv.URL}
+	p := config.Profile{Installation: "on-premises", Endpoint: srv.URL, APIEndpoint: srv.URL}
 	done := make(chan error, 1)
 	go func() {
 		_, err := Call(ctx, srv.Client().Transport, p, "fake-token", "test", json.RawMessage("{}"))

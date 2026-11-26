@@ -169,17 +169,58 @@ func TestCustomProfileEndpoints(t *testing.T) {
 	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
 	args := []string{"profiles", "create", "corp", "--endpoint=https://corp.example.com", "--format=json"}
 	assertFailure(t, execute(context.Background(), options, args...), 2, "PROFILE_INVALID")
-	args = append(args, "--installation-type=onpremise-standalone", "--api-endpoint=https://rpc.example.com/dl")
+	args = append(args, "--installation-type=on-premises", "--api-endpoint=https://rpc.example.com/dl")
 	if result := execute(context.Background(), options, args...); result.code != 0 {
 		t.Fatalf("create: %#v", result)
 	}
 	result := execute(context.Background(), options, "profiles", "list", "--format=json")
 	want := map[string]any{
-		"name": "corp", "installationType": "onpremise-standalone", "endpoint": "https://corp.example.com",
+		"name": "corp", "installationType": "on-premises", "endpoint": "https://corp.example.com",
 		"apiEndpoint": "https://rpc.example.com/dl",
 	}
 	if got := document(t, result.stdout)["profiles"].([]any)[0]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("custom profile: %#v", got)
+	}
+}
+
+func TestCreateProfileWithServiceAccount(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(dir, "config")})
+	create := []string{"profiles", "create", "corp", "--installation-type=on-premises", "--endpoint=https://bi.example.com"}
+	flags := []string{"--service-account-id=my-account", "--key-id=my-key", "--private-key-file=key.pem"}
+	created := execute(t.Context(), options, append(create, flags...)...)
+	if created.code != 0 {
+		t.Fatalf("create: %#v", created)
+	}
+	t.Chdir(t.TempDir())
+	listed := execute(t.Context(), options, "profiles", "list", "--format=json")
+	if listed.code != 0 {
+		t.Fatalf("list: %#v", listed)
+	}
+	account := document(t, listed.stdout)["profiles"].([]any)[0].(map[string]any)["serviceAccount"]
+	want := map[string]any{"id": "my-account", "keyId": "my-key", "privateKeyFile": filepath.Join(dir, "key.pem")}
+	if !reflect.DeepEqual(account, want) {
+		t.Errorf("saved account = %v, want %v", account, want)
+	}
+}
+
+func TestRejectInvalidServiceAccountProfiles(t *testing.T) {
+	options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
+	flags := []string{"--service-account-id=sa", "--key-id=key", "--private-key-file=key.pem"}
+	for _, tc := range []struct {
+		installation string
+		flags        []string
+	}{
+		{"on-premises", []string{"--private-key-file="}},
+		{"on-premises", flags[:2]},
+		{"on-premises", append(flags, "--token-cmd=helper")},
+		{"cloud", flags},
+		{"yateam", flags},
+		{"stackland", flags},
+	} {
+		args := []string{"profiles", "create", "work", "--installation-type=" + tc.installation, "--endpoint=https://bi.example.com", "--format=json"}
+		assertFailure(t, execute(t.Context(), options, append(args, tc.flags...)...), 2, "PROFILE_INVALID")
 	}
 }
 

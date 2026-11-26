@@ -35,6 +35,7 @@ func profileNameArg(cmd *cobra.Command, args []string) error {
 
 func (a *app) createProfileCommand() *cobra.Command {
 	var profile config.Profile
+	var account config.ServiceAccount
 	var tokenCommand string
 	cmd := &cobra.Command{
 		Use: "create NAME", Short: "Create an installation profile", Args: profileNameArg,
@@ -50,6 +51,9 @@ func (a *app) createProfileCommand() *cobra.Command {
 					return err
 				}
 			}
+			if cmd.Flags().Changed("service-account-id") || cmd.Flags().Changed("key-id") || cmd.Flags().Changed("private-key-file") {
+				profile.ServiceAccount = &account
+			}
 			if err := store.Create(cmd.Context(), name, profile); err != nil {
 				return err
 			}
@@ -57,11 +61,14 @@ func (a *app) createProfileCommand() *cobra.Command {
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&profile.Installation, "installation-type", "", "Installation type: cloud, yateam, onpremise-standalone, or stackland")
+	flags.StringVar(&profile.Installation, "installation-type", "", "Installation type: cloud, yateam, on-premises, or stackland")
 	flags.StringVar(&profile.Endpoint, "endpoint", "", "DataLens UI endpoint")
 	flags.StringVar(&profile.APIEndpoint, "api-endpoint", "", "Override the API endpoint derived from the UI endpoint")
-	flags.StringVar(&profile.OrganizationID, "organization", "", "Cloud organization ID")
+	flags.StringVar(&profile.OrganizationID, "organization", "", "Organization ID for Cloud or Stackland")
 	flags.StringVar(&tokenCommand, "token-cmd", "", "Run a program directly to obtain the token (quote arguments containing spaces)")
+	flags.StringVar(&account.ID, "service-account-id", "", "On-premises service account ID")
+	flags.StringVar(&account.KeyID, "key-id", "", "ID of the service account signing key")
+	flags.StringVar(&account.PrivateKeyFile, "private-key-file", "", "Path to the service account's PEM private key file")
 	return cmd
 }
 

@@ -86,6 +86,8 @@ func (p setupPrompt) auth(profile *config.Profile) (description, hint string, er
 	options := []string{environment, "Custom token command"}
 	if profile.Installation == "cloud" {
 		options = append([]string{"Yandex Cloud CLI (yc iam create-token)"}, options...)
+	} else if profile.Installation == "on-premises" {
+		options = append(options, "Service account (RSA private key file)")
 	}
 	n, err := p.choice("How should the CLI obtain a token?", options...)
 	if err != nil {
@@ -100,6 +102,26 @@ func (p setupPrompt) auth(profile *config.Profile) (description, hint string, er
 	}
 	if n == 0 {
 		return environment, "Set " + name + " to your token or DATALENS_TOKEN_PATH to its file before making an API request.\n", nil
+	}
+	if n == 2 {
+		account := &config.ServiceAccount{}
+		for _, field := range []struct {
+			prompt string
+			value  *string
+		}{
+			{"Service account ID: ", &account.ID},
+			{"Key ID: ", &account.KeyID},
+			{"Path to the RSA private key file (PEM): ", &account.PrivateKeyFile},
+		} {
+			for *field.value == "" {
+				*field.value, err = p.line(field.prompt)
+				if err != nil {
+					return "", "", err
+				}
+			}
+		}
+		profile.ServiceAccount = account
+		return "Service account", "", nil
 	}
 	question := "Command that prints a token: "
 	for {
@@ -125,35 +147,35 @@ func (a *app) runSetup(ctx context.Context) error {
 		return err
 	}
 	p := setupPrompt{ctx: ctx, in: bufio.NewScanner(a.options.In), out: a.options.Err}
-	n, err := p.choice("Choose your DataLens installation:", "Yandex Cloud", "Yandex Team", "On-premises (standalone)", "Stackland")
+	n, err := p.choice("Choose your DataLens installation:", "Yandex Cloud", "Yandex Team", "On-premises", "On-premises (Stackland)")
 	if err != nil {
 		return err
 	}
-	profile := config.Profile{Installation: []string{"cloud", "yateam", "onpremise-standalone", "stackland"}[n]}
+	profile := config.Profile{Installation: []string{"cloud", "yateam", "on-premises", "stackland"}[n]}
 	authentication, hint, err := p.auth(&profile)
 	if err != nil {
 		return err
 	}
-	switch profile.Installation {
-	case "cloud":
-		profile.OrganizationID, err = p.line("Cloud organization ID (Enter to use DATALENS_ORG_ID): ")
-		if err != nil {
-			return err
-		}
-		if profile.OrganizationID == "" {
-			hint += "Set DATALENS_ORG_ID before making a Cloud API request.\n"
-		}
-	case "onpremise-standalone", "stackland":
+	if profile.Installation == "on-premises" || profile.Installation == "stackland" {
 		question := "DataLens UI endpoint (HTTPS URL): "
 		for {
 			profile.Endpoint, err = p.line(question)
 			if err != nil {
 				return err
 			}
-			if _, err = config.NormalizeProfile(profile); err == nil {
+			if _, err = config.NormalizeProfile(config.Profile{Installation: profile.Installation, Endpoint: profile.Endpoint}); err == nil {
 				break
 			}
 			question = err.Error() + "\nDataLens UI endpoint: "
+		}
+	}
+	if profile.RequiresOrganization() {
+		profile.OrganizationID, err = p.line("Organization ID (Enter to use DATALENS_ORG_ID): ")
+		if err != nil {
+			return err
+		}
+		if profile.OrganizationID == "" {
+			hint += "Set DATALENS_ORG_ID before making an API request.\n"
 		}
 	}
 
@@ -220,14 +242,17 @@ func (p setupPrompt) confirmProfile(name string, profile config.Profile, authent
 	var summary strings.Builder
 	fmt.Fprintf(&summary, "\nProfile name: %s\nInstallation type: %s\nUI endpoint: %s\nAPI endpoint: %s\n",
 		name, profile.Installation, profile.Endpoint, profile.APIEndpoint)
-	if profile.Installation == "cloud" {
+	if profile.RequiresOrganization() {
 		org := profile.OrganizationID
 		if org == "" {
 			org = "from DATALENS_ORG_ID"
 		}
-		fmt.Fprintf(&summary, "Cloud organization: %s\n", org)
+		fmt.Fprintf(&summary, "Organization ID: %s\n", org)
 	}
 	fmt.Fprintf(&summary, "Authentication: %s\n", authentication)
+	if account := profile.ServiceAccount; account != nil {
+		fmt.Fprintf(&summary, "Service account ID: %s\nKey ID: %s\nPrivate key file: %s\n", account.ID, account.KeyID, account.PrivateKeyFile)
+	}
 	if _, err := io.WriteString(p.out, summary.String()); err != nil {
 		return false, err
 	}

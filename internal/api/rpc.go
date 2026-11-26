@@ -52,14 +52,14 @@ func Call(ctx context.Context, transport http.RoundTripper, profile config.Profi
 	if err != nil {
 		return nil, &output.Error{Code: "PROFILE_INVALID", Message: "Cannot build a request with the configured API endpoint.", ExitCode: 2}
 	}
-	scheme := "Bearer"
-	switch profile.Installation {
-	case "cloud":
+	if profile.RequiresOrganization() {
 		if profile.OrganizationID == "" {
-			return nil, &output.Error{Code: "ORGANIZATION_REQUIRED", Message: "Set DATALENS_ORG_ID or specify --organization=ID when creating a Cloud profile.", ExitCode: 2}
+			return nil, &output.Error{Code: "ORGANIZATION_REQUIRED", Message: "Set DATALENS_ORG_ID or specify --organization=ID when creating the profile.", ExitCode: 2}
 		}
 		req.Header.Set("x-dl-org-id", profile.OrganizationID)
-	case "yateam":
+	}
+	scheme := "Bearer"
+	if profile.Installation == "yateam" {
 		scheme = "OAuth"
 	}
 	req.Header.Set("Authorization", scheme+" "+token)

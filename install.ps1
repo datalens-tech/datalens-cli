@@ -2,10 +2,11 @@
     $ErrorActionPreference = 'Stop'
     $repo = 'datalens-tech/datalens-cli'
     $requestedVersion = $env:DATALENS_CLI_INSTALL_VERSION
+    $number = '(?:0|[1-9][0-9]*)'
+    $stablePattern = "$number\.$number\.$number"
     $tag = ''
     if ($requestedVersion) {
-        $number = '(?:0|[1-9][0-9]*)'
-        if ($requestedVersion -cnotmatch "^v?(?<version>$number\.$number\.$number(?:-beta\.$number)?)\z") {
+        if ($requestedVersion -cnotmatch "^v?(?<version>$stablePattern(?:-beta\.$number)?)\z") {
             throw 'DATALENS_CLI_INSTALL_VERSION must be a release version such as 0.1.0 or v0.1.0-beta.1.'
         }
         $requestedVersion = $Matches.version
@@ -47,13 +48,13 @@
     try {
         $manifest = Join-Path $temp 'SHA256SUMS'
         Get-ReleaseAsset 'SHA256SUMS' $tag $manifest
-        $versionPattern = if ($tag) { [regex]::Escape($requestedVersion) } else { 'v?[0-9]+\.[0-9]+\.[0-9]+(?:\+[0-9A-Za-z.-]+)?' }
+        $versionPattern = if ($tag) { [regex]::Escape($requestedVersion) } else { $stablePattern }
         $archivePattern = "^datalens_(?<version>${versionPattern})_windows_${arch}\.zip$"
         $archive = $null
         foreach ($line in [IO.File]::ReadLines($manifest)) {
             $fields = $line.Trim() -split '\s+'
             if ($fields.Count -lt 2 -or $fields[1] -cnotmatch $archivePattern) { continue }
-            $version = $Matches.version.TrimStart('v')
+            $version = $Matches.version
             if ($archive -or $fields.Count -ne 2 -or $fields[0] -notmatch '^[0-9a-fA-F]{64}$') {
                 throw "Expected one valid Windows/$arch archive in SHA256SUMS."
             }

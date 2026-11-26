@@ -56,8 +56,7 @@ func Refresh(ctx context.Context, dir, current string, client *http.Client) {
 }
 
 func channelDir(dir, version string) string {
-	base, _, _ := strings.Cut(version, "+")
-	if strings.Contains(base, "-") {
+	if strings.Contains(version, "-beta.") {
 		return filepath.Join(dir, "beta")
 	}
 	return filepath.Join(dir, "stable")
@@ -73,7 +72,7 @@ func readLatest(dir string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimPrefix(string(data), "v")
+	return strings.TrimPrefix(releaseTag(string(data)), "v")
 }
 
 func claim(path string) bool {

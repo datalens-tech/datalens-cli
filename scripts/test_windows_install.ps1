@@ -12,6 +12,9 @@ $ciManifestUri = "$ciReleases/latest/download/SHA256SUMS"
 $ciManifestArchive = $ciArchive
 $ciArchiveUri = "$ciReleases/download/v$Version/$ciArchive"
 $ciBreakChecksum = $false
+$ciOtherArchives = foreach ($other in "$Version-beta.10", "v$Version", "0$Version", "$Version+local") {
+    ('0' * 64) + "  datalens_${other}_windows_amd64.zip"
+}
 
 function gh { throw 'Unexpected fallback to GitHub CLI during the offline install test.' }
 
@@ -22,7 +25,8 @@ function Invoke-WebRequest {
     switch ($Uri.AbsoluteUri) {
         $ciManifestUri {
             $manifest = [IO.File]::ReadAllText((Join-Path $ciAssets 'SHA256SUMS'))
-            [IO.File]::WriteAllText($OutFile, $manifest.Replace($ciArchive, $ciManifestArchive))
+            $entries = @($ciOtherArchives) + $manifest.Replace($ciArchive, $ciManifestArchive)
+            [IO.File]::WriteAllText($OutFile, ($entries -join "`n"))
         }
         $ciArchiveUri {
             if ($ciBreakChecksum) {
@@ -73,7 +77,7 @@ try {
     if ((Get-FileHash -LiteralPath $config).Hash -ne $configHash) { throw 'Reinstall changed the profile.' }
     $exeHash = (Get-FileHash -LiteralPath $exe).Hash
 
-    $beta = "$Version-beta.1"
+    $beta = "$Version-beta.2"
     $env:DATALENS_CLI_INSTALL_VERSION = "v$beta"
     $ciManifestUri = "$ciReleases/download/v$beta/SHA256SUMS"
     try {

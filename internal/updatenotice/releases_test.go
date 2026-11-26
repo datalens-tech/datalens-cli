@@ -22,6 +22,11 @@ func TestNewer(t *testing.T) {
 		{"1.0.0-beta.10", "1.0.0-beta.2", false},
 		{"1.0.0-beta.10", "1.0.0", true},
 		{"1.0.0-beta.10", "1.1.0-rc.1", false},
+		{"1.0.0-beta.2", "1.0.1-beta", false},
+		{"1.0.0-beta.2", "1.0.1-beta.preview", false},
+		{"1.0.0-beta.2", "1.0.1-beta.01", false},
+		{"1.0.0-beta.2", "1.0.1-beta.10.1", false},
+		{"1.0.0", "1.0.1+build", false},
 		{"1.0.0+abc", "1.0.0+def", false},
 		{"1.0.0", "1.0.1\nrun this", false},
 	} {
@@ -55,7 +60,7 @@ func TestLatestAcrossPages(t *testing.T) {
 				header.Set("Link", `<https://api.github.com/next>; rel="next"`)
 				body = `[{"tag_name":"v1.0.2"},{"tag_name":"v8.0.0","draft":true},{"tag_name":"v7.0.0","prerelease":true},{"tag_name":"v2.0.0-beta.2","prerelease":true}]`
 			case 2:
-				body = `[{"tag_name":"v2.0.0-beta.10","prerelease":true},{"tag_name":"v1.0.10"},{"tag_name":"5.0.0"}]`
+				body = `[{"tag_name":"v2.0.0-beta.10","prerelease":true},{"tag_name":"v1.0.10"},{"tag_name":"5.0.0"},{"tag_name":"v9.0.0-beta.preview","prerelease":true},{"tag_name":"v9.0.0+build"}]`
 			default:
 				t.Fatalf("unexpected page %d", page)
 			}

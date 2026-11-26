@@ -303,20 +303,22 @@ func TestLegacyAPIVersionIsDroppedOnWrite(t *testing.T) {
 }
 
 func TestInvalidDocumentsArePreserved(t *testing.T) {
-	for _, tc := range []struct{ content, code string }{
-		{`{"version":3,"profiles":{},"future":"secret"}`, "CONFIG_VERSION_UNSUPPORTED"},
-		{`{"version":0,"profiles":{}}`, "CONFIG_VERSION_UNSUPPORTED"},
-		{`{"profiles":{}}`, "CONFIG_VERSION_UNSUPPORTED"},
-		{`{"version":1,"profiles":{"corp":{"installation":"standalone","endpoint":"https://corp.example.com/api"}}}`, "CONFIG_VERSION_UNSUPPORTED"},
-		{`{"version":2,"profiles":{`, "CONFIG_INVALID"},
-		{`{"version":2,"profiles":{}} {"extra":true}`, "CONFIG_INVALID"},
-		{`{"version":2,"profiles":null}`, "CONFIG_INVALID"},
-		{`{"version":2,"profiles":{},"unknown":true}`, "CONFIG_INVALID"},
-		{`{"version":2,"profiles":{"team":{"installation":"cloud"}}}`, "CONFIG_INVALID"},
-		{`{"version":2,"profiles":{"team":{"installationType":"cloud","unknown":true}}}`, "CONFIG_INVALID"},
-		{`{"version":2,"profiles":{"team":{"installationType":" \t "}}}`, "CONFIG_INVALID"},
-		{`{"version":2,"profiles":{"team":{"installationType":"unknown"}}}`, "CONFIG_INVALID"},
-		{`{"version":2,"profiles":{},"currentProfile":"missing"}`, "CONFIG_INVALID"},
+	for _, tc := range []struct{ content, code, hint string }{
+		{`{"version":3,"profiles":{},"future":"secret"}`, "CONFIG_VERSION_UNSUPPORTED", "supports schema 3"},
+		{`{"version":0,"profiles":{}}`, "CONFIG_VERSION_UNSUPPORTED", "datalens setup"},
+		{`{"profiles":{}}`, "CONFIG_VERSION_UNSUPPORTED", "datalens setup"},
+		{`{"version":1,"profiles":{"corp":{"installation":"standalone","endpoint":"https://corp.example.com/api"}}}`, "CONFIG_VERSION_UNSUPPORTED", "datalens setup"},
+		{`{"version":2,"profiles":{`, "CONFIG_INVALID", ""},
+		{`{"version":2,"profiles":{}} {"extra":true}`, "CONFIG_INVALID", ""},
+		{`{"version":2,"profiles":null}`, "CONFIG_INVALID", ""},
+		{`{"version":2,"profiles":{},"unknown":true}`, "CONFIG_INVALID", ""},
+		{`{"version":2,"profiles":{"team":{"installation":"cloud"}}}`, "CONFIG_INVALID", ""},
+		{`{"version":2,"profiles":{"team":{"installationType":"cloud","unknown":true}}}`, "CONFIG_INVALID", ""},
+		{`{"version":2,"profiles":{"team":{"installationType":" \t "}}}`, "CONFIG_INVALID", ""},
+		{`{"version":2,"profiles":{"team":{"installationType":"unknown"}}}`, "CONFIG_INVALID", "Installation type must be"},
+		{`{"version":2,"profiles":{},"currentProfile":"missing"}`, "CONFIG_INVALID", "Set currentProfile"},
+		{`{"version":2,"profiles":{"work":{"installationType":"cloud","endpoint":"https://datalens.ru?token=secret"}}}`, "CONFIG_INVALID", `profile "work"`},
+		{`{"version":2,"profiles":{"work":{"installationType":"on-premises","serviceAccount":{"privateKeyFile":"secret"}}}}`, "CONFIG_INVALID", "serviceAccount.privateKeyFile"},
 	} {
 		t.Run(tc.content, func(t *testing.T) {
 			s := testStore(t)
@@ -329,6 +331,9 @@ func TestInvalidDocumentsArePreserved(t *testing.T) {
 			}
 			_, err := s.Load()
 			requireCode(t, err, tc.code)
+			if !strings.Contains(err.Error(), tc.hint) || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("unexpected recovery message: %v", err)
+			}
 			requireCode(t, s.Create(t.Context(), "team", Profile{Installation: "yateam"}), tc.code)
 			data, err := os.ReadFile(path)
 			if err != nil || string(data) != tc.content {

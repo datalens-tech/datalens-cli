@@ -57,8 +57,15 @@ printf '%s\n' "$url" >> "$ASSETS/requests"
 case "$url" in
     https://github.com/datalens-tech/datalens-cli/releases/latest/download/SHA256SUMS)
         file="$ASSETS/SHA256SUMS" ;;
-    https://github.com/datalens-tech/datalens-cli/releases/download/v"$TEST_VERSION"/*)
-        file="$ASSETS/${url##*/}" ;;
+    https://github.com/datalens-tech/datalens-cli/releases/download/v*/*)
+        route=${url#*/releases/download/v}
+        version=${route%%/*}
+        asset=${route#*/}
+        case "$asset" in
+            SHA256SUMS) file="$ASSETS/SHA256SUMS-$version" ;;
+            datalens_"${version}"_*) file="$ASSETS/$asset" ;;
+            *) exit 22 ;;
+        esac ;;
     *) exit 22 ;;
 esac
 [ -f "$file" ] || exit 22
@@ -81,7 +88,10 @@ if [ -n "$out" ]; then cp "$file" "$out"; else cat "$file"; fi
             archive = self.assets / f"datalens_{version}_{target}.{suffix}"
             pack(archive, [(binary, 0o755)] + [(ROOT / name, 0o644) for name in LEGAL_FILES])
             checksums.append(f"{digest(archive)}  {archive.name}\n")
-        (self.assets / "SHA256SUMS").write_text("".join(sorted(checksums)))
+        manifest = "".join(sorted(checksums))
+        (self.assets / f"SHA256SUMS-{version}").write_text(manifest)
+        if "-" not in version:
+            (self.assets / "SHA256SUMS").write_text(manifest)
 
     def install(self, system="Linux", machine="x86_64", *, success=True):
         result = subprocess.run(
@@ -119,8 +129,10 @@ if [ -n "$out" ]; then cp "$file" "$out"; else cat "$file"; fi
 
     def test_pinned_release(self):
         requests = self.assets / "requests"
-        for version in ("0.1.0", "0.2.0-beta.1"):
+        versions = ("0.2.0-beta.2", "0.2.0-beta.10", "0.2.0")
+        for version in versions:
             self.release(version)
+        for version in versions:
             for prefix in ("", "v"):
                 with self.subTest(version=version, prefix=prefix):
                     self.env["DATALENS_CLI_INSTALL_VERSION"] = prefix + version
@@ -132,16 +144,27 @@ if [ -n "$out" ]; then cp "$file" "$out"; else cat "$file"; fi
                     ])
                     self.assertEqual((self.home / ".local/bin/datalens").read_text(), f"{version} linux_amd64")
 
+    def test_latest_uses_canonical_stable_archive(self):
+        self.release("0.2.0")
+        manifest = self.assets / "SHA256SUMS"
+        stable = manifest.read_text()
+        others = "".join(stable.replace("0.2.0", version) for version in ("0.2.0-beta.10", "00.2.0", "v0.2.0", "0.2.0+local"))
+        manifest.write_text(others + stable)
+        self.install()
+        self.assertEqual((self.home / ".local/bin/datalens").read_text(), "0.2.0 linux_amd64")
+
     def test_pin_rejects_wrong_manifest_and_invalid_versions(self):
         self.release("0.2.0")
         self.env["DATALENS_CLI_INSTALL_VERSION"] = ""
         self.install()
-        self.env.update(TEST_VERSION="0.2.0-beta.1", DATALENS_CLI_INSTALL_VERSION="v0.2.0-beta.1")
+        self.env["DATALENS_CLI_INSTALL_VERSION"] = "v0.2.0-beta.2"
+        self.release("0.2.0-beta.10")
+        (self.assets / "SHA256SUMS-0.2.0-beta.2").write_text((self.assets / "SHA256SUMS-0.2.0-beta.10").read_text())
         requests = self.assets / "requests"
         requests.write_text("")
         self.install(success=False)
         self.assertEqual(requests.read_text().splitlines(), [
-            "https://github.com/datalens-tech/datalens-cli/releases/download/v0.2.0-beta.1/SHA256SUMS",
+            "https://github.com/datalens-tech/datalens-cli/releases/download/v0.2.0-beta.2/SHA256SUMS",
         ])
         self.assertEqual((self.home / ".local/bin/datalens").read_text(), "0.2.0 linux_amd64")
         requests.unlink()
@@ -200,14 +223,16 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 case "$tag/$asset" in
-    "${TEST_MANIFEST_TAG:-}/SHA256SUMS"|"v$TEST_VERSION/datalens_${TEST_VERSION}_linux_amd64.tar.gz") cat "$ASSETS/$asset" ;;
+    /SHA256SUMS) cat "$ASSETS/SHA256SUMS" ;;
+    "v$TEST_VERSION/SHA256SUMS") cat "$ASSETS/SHA256SUMS-$TEST_VERSION" ;;
+    "v$TEST_VERSION/datalens_${TEST_VERSION}_linux_amd64.tar.gz") cat "$ASSETS/$asset" ;;
     *) exit 1 ;;
 esac
 """)
         self.install()
         self.assertEqual((self.home / ".local/bin/datalens").read_text(), "0.2.0 linux_amd64")
         self.release("0.3.0-beta.1")
-        self.env.update(TEST_MANIFEST_TAG="v0.3.0-beta.1", DATALENS_CLI_INSTALL_VERSION="0.3.0-beta.1")
+        self.env["DATALENS_CLI_INSTALL_VERSION"] = "0.3.0-beta.1"
         self.install()
         self.assertEqual((self.home / ".local/bin/datalens").read_text(), "0.3.0-beta.1 linux_amd64")
 

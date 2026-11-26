@@ -35,10 +35,10 @@ main() {
     releases="https://github.com/$repo/releases"
     requested=${DATALENS_CLI_INSTALL_VERSION:-}
     manifest_tag=''
+    number='(0|[1-9][0-9]*)'
+    stable_pattern="$number[.]$number[.]$number"
     if [ -n "$requested" ]; then
-        LC_ALL=C awk 'BEGIN {
-            n = "(0|[1-9][0-9]*)"
-            pattern = "^v?" n "[.]" n "[.]" n "(-beta[.]" n ")?$"
+        LC_ALL=C awk -v pattern="^v?$stable_pattern(-beta[.]$number)?$" 'BEGIN {
             exit !(ENVIRON["DATALENS_CLI_INSTALL_VERSION"] ~ pattern)
         }' || fail 'DATALENS_CLI_INSTALL_VERSION must be a release version such as 0.1.0 or 0.1.0-beta.1 (optional v prefix).'
         requested=${requested#v}
@@ -85,11 +85,10 @@ main() {
     trap 'rm -rf "$tmp"; if [ -n "$stage" ]; then rm -f "$stage"; fi' EXIT
     trap 'exit 1' HUP INT TERM
     download SHA256SUMS "$manifest_tag" "$tmp/manifest"
-    entry=$(LC_ALL=C awk -v target="${os}_${arch}" -v ext="$ext" -v requested="$requested" '
+    entry=$(LC_ALL=C awk -v target="${os}_${arch}" -v ext="$ext" -v requested="$requested" -v stable="$stable_pattern" '
         BEGIN {
             suffix = (ext == "zip" ? "[.]zip" : "[.]tar[.]gz")
-            version = "v?[0-9]+[.][0-9]+[.][0-9]+([+][0-9A-Za-z.-]+)?"
-            pattern = "^datalens_" version "_" target suffix "$"
+            pattern = "^datalens_" stable "_" target suffix "$"
             pinned = "datalens_" requested "_" target "." ext
         }
         (requested == "" ? $2 ~ pattern : $2 == pinned) {
@@ -103,7 +102,7 @@ main() {
     archive=${entry#* }
     version=${archive#datalens_}
     version=${version%%_*}
-    tag=v${version#v}
+    tag=v$version
     download "$archive" "$tag" "$tmp/archive"
 
     if command -v sha256sum >/dev/null 2>&1; then

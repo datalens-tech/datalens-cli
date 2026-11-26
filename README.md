@@ -86,6 +86,14 @@ RPC responses go to stdout as indented JSON. Use `--format=json` for compact JSO
 
 Exit codes are `0` for success, `1` for runtime failures, `2` for usage or configuration errors, `3` for authentication failures, and `130` or `143` for SIGINT or SIGTERM.
 
+### Versioning and compatibility
+
+During `0.x`, commands and behavior can change in any release, including patches and betas. Check the release notes for breaking changes and migration examples. Starting with `1.0.0`, we follow Semantic Versioning: patches fix bugs, minor releases add compatible features, and breaking changes require a major release. For example, accepting positional JSON alongside `--args` is compatible. From 1.0 onward, we announce a flag's deprecation in at least one stable release before removing it in a new major version.
+
+The CLI contract covers documented commands, arguments, flags, environment variables, profile and credential selection, exit codes, output streams, and the names, types, and meanings of documented CLI JSON fields and error codes. Scripts should accept additional fields. Help text, error wording, and formatting may change. A successful `datalens rpc` writes the server's JSON value to stdout without a wrapper and preserves numeric precision. DataLens defines the response fields.
+
+Saved profiles carry over across releases, including major upgrades. The CLI migrates settings where possible, preserving the active profile, its endpoints, and its credential source. If a profile needs manual changes, the CLI explains how to recover it.
+
 ### Install locations and updates
 
 | Platform | Executable | Directory containing `config.json` |
@@ -180,6 +188,8 @@ go test ./internal/rpchelp ./internal/cli
 ### Release builds
 
 `make build-all` builds macOS (arm64, amd64), Linux (amd64, 386), and Windows (amd64, 386). To build one target, run e.g. `make build TARGET=darwin/amd64`. Binaries go to `bin/<os>-<arch>/`.
+
+The release maintainer chooses the CLI version and pushes its tag. Moving to a new DataLens API major always requires a new CLI major, including during `0.x`. The two version numbers are independent. For example, if CLI `1.4.2` uses API v3, the first release targeting API v4 is CLI `2.0.0` or a beta of that version.
 
 Pushing a tag such as `v0.1.0` or `v0.1.0-beta.1` builds the CLI with that version and prepares a draft GitHub Release. Beta tags mark the draft as a prerelease. Review the attached archives, installers, and `SHA256SUMS` before publishing the draft.
 

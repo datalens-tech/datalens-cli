@@ -6,19 +6,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"golang.org/x/mod/semver"
 )
 
+var betaSuffix = regexp.MustCompile(`^-beta\.[0-9]+$`)
+
 func releaseTag(version string) string {
 	tag := "v" + strings.TrimPrefix(version, "v")
-	if !semver.IsValid(tag) || semver.Canonical(tag) != strings.TrimSuffix(tag, semver.Build(tag)) {
+	if semver.Canonical(tag) != tag {
 		return ""
 	}
-	pre := semver.Prerelease(tag)
-	if pre != "" && pre != "-beta" && !strings.HasPrefix(pre, "-beta.") {
+	if pre := semver.Prerelease(tag); pre != "" && !betaSuffix.MatchString(pre) {
 		return ""
 	}
 	return tag

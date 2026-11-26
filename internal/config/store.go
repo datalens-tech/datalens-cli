@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -28,9 +29,6 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*p = Profile(stored.fields)
-	if p.ServiceAccount != nil && !filepath.IsAbs(p.ServiceAccount.PrivateKeyFile) {
-		return failure("CONFIG_INVALID", "The private key file path in a saved profile must be absolute.")
-	}
 	if p.Installation == "onpremise-standalone" {
 		p.Installation = "on-premises"
 	}
@@ -111,8 +109,11 @@ func (s Store) Load() (Document, error) {
 	if err := json.Unmarshal(data, &version); err != nil {
 		return Document{}, failure("CONFIG_INVALID", "Configuration file is not valid JSON.")
 	}
-	if version.Version != SchemaVersion {
-		return Document{}, failure("CONFIG_VERSION_UNSUPPORTED", "Configuration schema version is unsupported; use a compatible CLI version.")
+	if version.Version > SchemaVersion {
+		return Document{}, failure("CONFIG_VERSION_UNSUPPORTED", fmt.Sprintf("config.json uses schema %d. This CLI supports schema %d. Use the CLI version that wrote the file or upgrade to one that supports schema %d.", version.Version, SchemaVersion, version.Version))
+	}
+	if version.Version < SchemaVersion {
+		return Document{}, failure("CONFIG_VERSION_UNSUPPORTED", "Cannot migrate this config.json automatically. Move it to a private backup, run 'datalens setup' for each profile using its saved settings, then run 'datalens profiles activate NAME' to restore the active profile.")
 	}
 	var doc Document
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -124,9 +125,15 @@ func (s Store) Load() (Document, error) {
 		if !ValidProfileName(name) {
 			return Document{}, failure("CONFIG_INVALID", "Configuration contains an invalid profile name.")
 		}
+		if strings.TrimSpace(profile.Installation) == "" {
+			return Document{}, failure("CONFIG_INVALID", fmt.Sprintf("Set installationType for profile %q in config.json.", name))
+		}
+		if profile.ServiceAccount != nil && !filepath.IsAbs(profile.ServiceAccount.PrivateKeyFile) {
+			return Document{}, failure("CONFIG_INVALID", fmt.Sprintf("Set serviceAccount.privateKeyFile for profile %q in config.json to the absolute path of its PEM file.", name))
+		}
 		normalized, err := NormalizeProfile(profile)
-		if err != nil || strings.TrimSpace(profile.Installation) == "" {
-			return Document{}, failure("CONFIG_INVALID", "Configuration contains an invalid profile.")
+		if err != nil {
+			return Document{}, failure("CONFIG_INVALID", fmt.Sprintf("Check profile %q in config.json. %s", name, err))
 		}
 		doc.Profiles[name] = normalized
 	}
@@ -136,7 +143,7 @@ func (s Store) Load() (Document, error) {
 	}
 	if _, ok := doc.Profiles[doc.CurrentProfile]; !ok {
 		if doc.CurrentProfile != defaultName {
-			return Document{}, failure("CONFIG_INVALID", "The active profile does not exist in the configuration.")
+			return Document{}, failure("CONFIG_INVALID", "Set currentProfile in config.json to the name of an existing profile.")
 		}
 		doc.CurrentProfile = doc.ActiveName()
 	}

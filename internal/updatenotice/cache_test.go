@@ -101,7 +101,7 @@ func TestCacheRejectsInvalidCandidatesAndSeparatesChannels(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("launched %d checks across two channels", calls)
 	}
-	for _, candidate := range []string{"v3.0.0-beta.1", "1.0.0", "0.4.0", "../../3.0.0", "3.0.0\nInjected notice"} {
+	for _, candidate := range []string{"v3.0.0-beta.1", "1.0.0", "0.4.0", "../../3.0.0", "3.0.0\nInjected notice", "3.0.0+build", "vv3.0.0"} {
 		if err := os.WriteFile(filepath.Join(dir, "stable", "latest"), []byte(candidate), 0600); err != nil {
 			t.Fatal(err)
 		}

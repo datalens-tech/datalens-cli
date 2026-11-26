@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 )
@@ -17,26 +18,62 @@ type Store struct{ Dir string }
 
 const maxConfigSize = 1024 * 1024
 
-func (p *Profile) UnmarshalJSON(data []byte) error {
-	type fields Profile
+type SavedProfile struct {
+	Profile
+	invalid json.RawMessage
+	reason  string
+}
+
+func (p SavedProfile) Problem(name string) string {
+	if !ValidProfileName(name) {
+		return "Rename this profile in config.json using letters, digits, dots, underscores, or hyphens."
+	}
+	if p.reason == "" {
+		return ""
+	}
+	return fmt.Sprintf("Check profile %q in config.json. %s", name, p.reason)
+}
+
+func (p SavedProfile) MarshalJSON() ([]byte, error) {
+	if p.invalid != nil {
+		return p.invalid, nil
+	}
+	return json.Marshal(p.Profile)
+}
+
+func (p *SavedProfile) UnmarshalJSON(data []byte) error {
 	var stored struct {
-		fields
+		Profile
 		LegacyAPIVersion string `json:"apiVersion"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&stored); err != nil {
-		return err
+	var reason string
+	switch {
+	case decoder.Decode(&stored) != nil:
+		reason = "Correct the profile fields or delete and recreate it."
+	case strings.TrimSpace(stored.Installation) == "":
+		reason = "Set installationType for this profile."
+	case stored.ServiceAccount != nil && !filepath.IsAbs(stored.ServiceAccount.PrivateKeyFile):
+		reason = "Set serviceAccount.privateKeyFile to the absolute path of its PEM file."
+	default:
+		if stored.Installation == "onpremise-standalone" {
+			stored.Installation = "on-premises"
+		}
+		profile, err := NormalizeProfile(stored.Profile)
+		if err == nil {
+			*p = SavedProfile{Profile: profile}
+			return nil
+		}
+		reason = err.Error()
 	}
-	*p = Profile(stored.fields)
-	if p.Installation == "onpremise-standalone" {
-		p.Installation = "on-premises"
-	}
-	return nil
+	raw, err := json.Marshal(json.RawMessage(data))
+	*p = SavedProfile{invalid: raw, reason: reason}
+	return err
 }
 
 func emptyDocument() Document {
-	return Document{Version: SchemaVersion, Profiles: map[string]Profile{}}
+	return Document{Version: SchemaVersion, Profiles: map[string]SavedProfile{}}
 }
 
 func inspect(path string, directory bool) (os.FileInfo, error) {
@@ -113,7 +150,7 @@ func (s Store) Load() (Document, error) {
 		return Document{}, failure("CONFIG_VERSION_UNSUPPORTED", fmt.Sprintf("config.json uses schema %d. This CLI supports schema %d. Use the CLI version that wrote the file or upgrade to one that supports schema %d.", version.Version, SchemaVersion, version.Version))
 	}
 	if version.Version < SchemaVersion {
-		return Document{}, failure("CONFIG_VERSION_UNSUPPORTED", "Cannot migrate this config.json automatically. Move it to a private backup, run 'datalens setup' for each profile using its saved settings, then run 'datalens profiles activate NAME' to restore the active profile.")
+		return Document{}, failure("CONFIG_VERSION_UNSUPPORTED", "Cannot migrate this config.json automatically. Move it to a private backup. Recreate each profile with its saved settings using 'datalens setup' or 'datalens profiles create NAME'. For custom endpoints, pass --endpoint and --api-endpoint to 'profiles create'. Then run 'datalens profiles activate NAME' to restore the active profile.")
 	}
 	var doc Document
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -121,31 +158,18 @@ func (s Store) Load() (Document, error) {
 	if err := decoder.Decode(&doc); err != nil || doc.Profiles == nil {
 		return Document{}, failure("CONFIG_INVALID", "Configuration file has an invalid structure.")
 	}
-	for name, profile := range doc.Profiles {
-		if !ValidProfileName(name) {
-			return Document{}, failure("CONFIG_INVALID", "Configuration contains an invalid profile name.")
-		}
-		if strings.TrimSpace(profile.Installation) == "" {
-			return Document{}, failure("CONFIG_INVALID", fmt.Sprintf("Set installationType for profile %q in config.json.", name))
-		}
-		if profile.ServiceAccount != nil && !filepath.IsAbs(profile.ServiceAccount.PrivateKeyFile) {
-			return Document{}, failure("CONFIG_INVALID", fmt.Sprintf("Set serviceAccount.privateKeyFile for profile %q in config.json to the absolute path of its PEM file.", name))
-		}
-		normalized, err := NormalizeProfile(profile)
-		if err != nil {
-			return Document{}, failure("CONFIG_INVALID", fmt.Sprintf("Check profile %q in config.json. %s", name, err))
-		}
-		doc.Profiles[name] = normalized
+	if doc.CurrentProfile == "" && len(doc.Profiles) == 0 {
+		return doc, nil
 	}
 	if doc.CurrentProfile == "" {
-		// Older configurations selected "default" when no active profile was recorded.
 		doc.CurrentProfile = defaultName
 	}
 	if _, ok := doc.Profiles[doc.CurrentProfile]; !ok {
 		if doc.CurrentProfile != defaultName {
 			return Document{}, failure("CONFIG_INVALID", "Set currentProfile in config.json to the name of an existing profile.")
 		}
-		doc.CurrentProfile = doc.ActiveName()
+		// Older configurations could select the built-in Cloud profile without saving it.
+		doc.Profiles[defaultName] = SavedProfile{Profile: Profile{Installation: "cloud", Endpoint: cloudUI, APIEndpoint: cloudAPI}}
 	}
 	return doc, nil
 }
@@ -170,7 +194,7 @@ func (s Store) create(ctx context.Context, name string, profile Profile, activat
 		if _, exists := doc.Profiles[name]; exists {
 			return failure("PROFILE_EXISTS", "A profile with this name already exists.")
 		}
-		doc.Profiles[name] = p
+		doc.Profiles[name] = SavedProfile{Profile: p}
 		if activate || len(doc.Profiles) == 1 {
 			doc.CurrentProfile = name
 		}
@@ -192,11 +216,11 @@ func (s Store) Use(ctx context.Context, name string) error {
 }
 
 func (d Document) CheckDeletable(name string) error {
-	if !ValidProfileName(name) {
-		return failure("PROFILE_INVALID", "A valid profile name is required.")
-	}
 	if _, exists := d.Profiles[name]; exists {
 		return nil
+	}
+	if !ValidProfileName(name) {
+		return failure("PROFILE_INVALID", "A valid profile name is required.")
 	}
 	if len(d.Profiles) == 0 {
 		return failure("NO_PROFILES", NoProfilesMessage)
@@ -204,13 +228,13 @@ func (d Document) CheckDeletable(name string) error {
 	return failure("PROFILE_NOT_FOUND", "The selected profile does not exist.")
 }
 
-func (s Store) Delete(ctx context.Context, name string) (empty bool, err error) {
-	if !ValidProfileName(name) {
-		return false, failure("PROFILE_INVALID", "A valid profile name is required.")
-	}
+func (s Store) Delete(ctx context.Context, name string, expected *SavedProfile) (empty bool, err error) {
 	err = s.mutate(ctx, func(doc *Document) error {
 		if err := doc.CheckDeletable(name); err != nil {
 			return err
+		}
+		if expected != nil && !reflect.DeepEqual(*expected, doc.Profiles[name]) {
+			return failure("PROFILE_CHANGED", "The profile changed while awaiting confirmation. Review its settings and retry the deletion.")
 		}
 		delete(doc.Profiles, name)
 		if doc.CurrentProfile == name {

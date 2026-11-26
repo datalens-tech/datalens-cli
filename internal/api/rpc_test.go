@@ -102,10 +102,10 @@ func TestRPCInstallationHeadersAndPayload(t *testing.T) {
 			if test.org != "" {
 				missingOrg := p
 				missingOrg.OrganizationID = ""
-				_, err := Call(t.Context(), srv.Client().Transport, missingOrg, "fake-token", "getDetails", json.RawMessage(args))
+				_, err := Call(t.Context(), srv.Client().Transport, missingOrg, "getDetails", json.RawMessage(args), new("fake-token"), nil)
 				requireCode(t, err, "ORGANIZATION_REQUIRED", 2)
 			}
-			res, err := Call(t.Context(), srv.Client().Transport, p, "fake-token", "getDetails", json.RawMessage(args))
+			res, err := Call(t.Context(), srv.Client().Transport, p, "getDetails", json.RawMessage(args), new("fake-token"), nil)
 			if err != nil || string(res) != "[9007199254740993]" {
 				t.Fatalf("got %s, %v", res, err)
 			}
@@ -145,7 +145,7 @@ func TestRPCErrorHandling(t *testing.T) {
 			io.WriteString(w, tc.body)
 		}))
 		p := config.Profile{Installation: "on-premises", Endpoint: srv.URL, APIEndpoint: srv.URL}
-		_, err := Call(t.Context(), srv.Client().Transport, p, "fake-token", "test", json.RawMessage("{}"))
+		_, err := Call(t.Context(), srv.Client().Transport, p, "test", json.RawMessage("{}"), new("fake-token"), nil)
 		srv.Close()
 		requireCode(t, err, tc.code, tc.exit)
 		if strings.Contains(err.Error(), "server-only-detail") {
@@ -168,7 +168,7 @@ func TestRPCCancelDuringResponse(t *testing.T) {
 	p := config.Profile{Installation: "on-premises", Endpoint: srv.URL, APIEndpoint: srv.URL}
 	done := make(chan error, 1)
 	go func() {
-		_, err := Call(ctx, srv.Client().Transport, p, "fake-token", "test", json.RawMessage("{}"))
+		_, err := Call(ctx, srv.Client().Transport, p, "test", json.RawMessage("{}"), new("fake-token"), nil)
 		done <- err
 	}()
 	select {

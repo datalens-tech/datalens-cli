@@ -22,6 +22,7 @@ import (
 
 	"github.com/datalens-tech/datalens-cli/internal/buildinfo"
 	"github.com/datalens-tech/datalens-cli/internal/config"
+	"github.com/datalens-tech/datalens-cli/internal/output"
 )
 
 type exchangeTransport func(*http.Request) (*http.Response, error)
@@ -124,6 +125,26 @@ func TestServiceAccountTokenExchange(t *testing.T) {
 		if strings.Contains(err.Error(), "sensitive") {
 			t.Fatal("server response leaked")
 		}
+	}
+
+	tr := exchangeTransport(func(r *http.Request) (*http.Response, error) {
+		var assertion struct {
+			SAToken string `json:"saToken"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&assertion); err != nil || assertion.SAToken == "" {
+			t.Fatal("missing service account assertion")
+		}
+		data, err := json.Marshal(map[string]string{"code": "AUTH.DENIED", "message": "Rejected assertion " + assertion.SAToken, "requestId": "exchange-id"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader(string(data)))}, nil
+	})
+	_, err = exchangeServiceAccountToken(t.Context(), tr, p)
+	var failure *output.Error
+	if !errors.As(err, &failure) || failure.Code != "AUTH_REJECTED" || failure.ExitCode != 3 || failure.HTTPStatus != 403 ||
+		failure.APICode != "AUTH.DENIED" || failure.APIMessage != "" || failure.RequestID != "exchange-id" {
+		t.Fatal("missing exchange diagnostics or leaked service account assertion")
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())

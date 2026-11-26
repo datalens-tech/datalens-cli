@@ -14,6 +14,7 @@ import (
 
 	"github.com/datalens-tech/datalens-cli/internal/buildinfo"
 	"github.com/datalens-tech/datalens-cli/internal/cli"
+	"github.com/datalens-tech/datalens-cli/internal/config"
 	"github.com/datalens-tech/datalens-cli/internal/output"
 )
 
@@ -194,12 +195,19 @@ func TestCreateProfileWithServiceAccount(t *testing.T) {
 		t.Fatalf("create: %#v", created)
 	}
 	t.Chdir(t.TempDir())
+	saved, err := (config.Store{Dir: filepath.Join(dir, "config")}).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := saved.Profiles["corp"].ServiceAccount; got == nil || got.PrivateKeyFile != filepath.Join(dir, "key.pem") {
+		t.Fatalf("saved service account key path: %#v", got)
+	}
 	listed := execute(t.Context(), options, "profiles", "list", "--format=json")
 	if listed.code != 0 {
 		t.Fatalf("list: %#v", listed)
 	}
 	account := document(t, listed.stdout)["profiles"].([]any)[0].(map[string]any)["serviceAccount"]
-	want := map[string]any{"id": "my-account", "keyId": "my-key", "privateKeyFile": filepath.Join(dir, "key.pem")}
+	want := map[string]any{"id": "my-account", "keyId": "my-key"}
 	if !reflect.DeepEqual(account, want) {
 		t.Errorf("saved account = %v, want %v", account, want)
 	}

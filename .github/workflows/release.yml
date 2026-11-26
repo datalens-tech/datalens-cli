@@ -32,6 +32,8 @@ jobs:
             echo "Expected a tag like v0.1.0 or v0.1.0-beta.1" >&2
             exit 1
           fi
+          make check test
+          python3 -B scripts/test_install.py
           make dist verify-dist VERSION="${GITHUB_REF_NAME#v}"
       - name: Create or complete the draft
         shell: bash

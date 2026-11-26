@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/datalens-tech/datalens-cli/internal/output"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 //go:embed cloud.json
@@ -100,13 +101,15 @@ func Write(w io.Writer, action, installation, explicitProfile string) error {
 
 func (c catalog) format(action, edition, profileFlag string, op operation) (string, error) {
 	var text strings.Builder
+	var schema *jsonschema.Schema
 	var fields arguments
 	if len(op.Schema) > 0 {
 		var err error
-		fields, err = c.summarize(op.Schema, map[string]bool{})
+		schema, err = c.compileOperation(op)
 		if err != nil {
 			return "", err
 		}
+		fields = summarize(schema, map[*jsonschema.Schema]bool{})
 	}
 	args := "[JSON]"
 	if len(fields.required) > 0 {
@@ -130,11 +133,7 @@ func (c catalog) format(action, edition, profileFlag string, op operation) (stri
 		}
 	}
 	example := op.Example
-	if len(example) == 0 && len(op.Schema) != 0 {
-		schema, err := c.compileOperation(op)
-		if err != nil {
-			return "", err
-		}
+	if len(example) == 0 && schema != nil {
 		example = minimalExample(schema)
 	} else if len(example) == 0 && action == "getTenantDetails" {
 		example = json.RawMessage(`{}`)
@@ -144,7 +143,7 @@ func (c catalog) format(action, edition, profileFlag string, op operation) (stri
 		if err := json.Compact(&compact, example); err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&text, "\nExample:\n  %s\n", exampleCommand(action, profileFlag, compact.String()))
+		fmt.Fprintf(&text, "\nExample:\n  %s\n", ExampleCommands(action, compact.String(), profileFlag))
 	}
 	if len(op.Schema) != 0 {
 		fmt.Fprintf(&text, "\nFull argument schema (JSON):\n  datalens schema show %s%s\n", action, profileFlag)
@@ -159,12 +158,16 @@ func profileOption(name string) string {
 	return " --profile=" + name
 }
 
-func exampleCommand(action, profileFlag, body string) string {
+func ExampleCommands(action, body, profileFlag string) string {
 	command := "datalens rpc " + action
-	if body != "{}" {
-		command += " '" + strings.ReplaceAll(body, "'", "'\\''") + "'"
+	if body == "{}" {
+		return command + profileFlag
 	}
-	return command + profileFlag
+	return shellExamples(command, body, profileFlag)
+}
+
+func posixExample(command, body, profileFlag string) string {
+	return command + " '" + strings.ReplaceAll(body, "'", "'\\''") + "'" + profileFlag
 }
 
 type arguments struct {
@@ -172,51 +175,34 @@ type arguments struct {
 	variants             bool
 }
 
-func (c catalog) summarize(raw json.RawMessage, visiting map[string]bool) (arguments, error) {
-	var node struct {
-		Ref                 string `json:"$ref"`
-		Required            []string
-		Properties          map[string]json.RawMessage
-		AllOf, AnyOf, OneOf []json.RawMessage
-	}
+func summarize(schema *jsonschema.Schema, visiting map[*jsonschema.Schema]bool) arguments {
 	fields := arguments{required: map[string]bool{}, properties: map[string]bool{}}
-	if err := json.Unmarshal(raw, &node); err != nil {
-		return fields, err
+	if visiting[schema] {
+		return fields
 	}
-	for _, name := range node.Required {
-		fields.required[name] = true
+	visiting[schema] = true
+	defer delete(visiting, schema)
+	for _, key := range schema.Required {
+		fields.required[key] = true
 	}
-	for name := range node.Properties {
-		fields.properties[name] = true
+	for key := range schema.Properties {
+		fields.properties[key] = true
 	}
-	if node.Ref != "" && !visiting[node.Ref] {
-		name := strings.TrimPrefix(node.Ref, "#/$defs/")
-		name = strings.ReplaceAll(strings.ReplaceAll(name, "~1", "/"), "~0", "~")
-		def, ok := c.Schemas[name]
-		if !ok {
-			return fields, fmt.Errorf("missing RPC schema definition %q", name)
-		}
-		visiting[node.Ref] = true
-		defer delete(visiting, node.Ref)
-		node.AllOf = append(node.AllOf, def)
+	parts := schema.AllOf
+	if schema.Ref != nil {
+		parts = append(slices.Clip(parts), schema.Ref)
 	}
-	for _, part := range node.AllOf {
-		child, err := c.summarize(part, visiting)
-		if err != nil {
-			return fields, err
-		}
+	for _, part := range parts {
+		child := summarize(part, visiting)
 		maps.Copy(fields.required, child.required)
 		maps.Copy(fields.properties, child.properties)
 		fields.variants = fields.variants || child.variants
 	}
-	for _, variants := range [][]json.RawMessage{node.OneOf, node.AnyOf} {
+	for _, variants := range [][]*jsonschema.Schema{schema.OneOf, schema.AnyOf} {
 		var common map[string]bool
 		for _, variant := range variants {
 			fields.variants = true
-			child, err := c.summarize(variant, visiting)
-			if err != nil {
-				return fields, err
-			}
+			child := summarize(variant, visiting)
 			if common == nil {
 				common = child.required
 			} else {
@@ -225,7 +211,7 @@ func (c catalog) summarize(raw json.RawMessage, visiting map[string]bool) (argum
 		}
 		maps.Copy(fields.required, common)
 	}
-	return fields, nil
+	return fields
 }
 
 func (c catalog) argumentSchema(op operation) (json.RawMessage, error) {

@@ -7,17 +7,29 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"io"
+	"strings"
 	"unicode/utf8"
 )
 
 type Error struct {
-	Code     string `json:"code"`
-	Message  string `json:"message"`
-	ExitCode int    `json:"-"`
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	ExitCode   int    `json:"-"`
+	HTTPStatus int    `json:"httpStatus,omitempty"`
+	APICode    string `json:"apiCode,omitempty"`
+	APIMessage string `json:"apiMessage,omitempty"`
+	RequestID  string `json:"requestId,omitempty"`
 }
 
 func (e *Error) Error() string {
-	return e.Message
+	message := e.Message
+	if detail := strings.TrimSpace(e.APICode + " " + e.APIMessage); detail != "" {
+		message += " " + detail
+	}
+	if e.RequestID != "" {
+		message += " (request ID: " + e.RequestID + ")"
+	}
+	return message
 }
 
 type Diagnostics struct {
@@ -150,7 +162,7 @@ func (w Writer) Failure(failure *Error) error {
 	}
 	switch w.Format {
 	case "", "text":
-		if err := write(w.Err, []byte("Error: "+failure.Message+"\n")); err != nil {
+		if err := write(w.Err, []byte("Error: "+failure.Error()+"\n")); err != nil {
 			return err
 		}
 		return w.WriteDiagnostics()

@@ -42,9 +42,9 @@ func (p Profile) RequiresOrganization() bool {
 }
 
 type Document struct {
-	Version        int                `json:"version"`
-	CurrentProfile string             `json:"currentProfile,omitempty"`
-	Profiles       map[string]Profile `json:"profiles"`
+	Version        int                     `json:"version"`
+	CurrentProfile string                  `json:"currentProfile,omitempty"`
+	Profiles       map[string]SavedProfile `json:"profiles"`
 }
 
 type Error struct {
@@ -197,27 +197,34 @@ func (d Document) ActiveName() string {
 	return first
 }
 
-func Resolve(doc Document, explicitName, envName string) (string, Profile, error) {
-	if len(doc.Profiles) == 0 {
-		return "", Profile{}, failure("NO_PROFILES", NoProfilesMessage)
+func (d Document) SelectedName(explicitName, envName string) (string, error) {
+	if len(d.Profiles) == 0 {
+		return "", failure("NO_PROFILES", NoProfilesMessage)
 	}
 	name := explicitName
 	if name == "" {
 		name = envName
 	}
 	if name == "" {
-		name = doc.ActiveName()
+		name = d.ActiveName()
+	}
+	if _, ok := d.Profiles[name]; ok {
+		return name, nil
 	}
 	if !ValidProfileName(name) {
-		return "", Profile{}, failure("PROFILE_INVALID", "Profile names may contain only letters, digits, dots, underscores, and hyphens.")
+		return "", failure("PROFILE_INVALID", "Profile names may contain only letters, digits, dots, underscores, and hyphens.")
 	}
-	p, ok := doc.Profiles[name]
-	if !ok {
-		return "", Profile{}, failure("PROFILE_NOT_FOUND", "The selected profile does not exist.")
-	}
-	p, err := NormalizeProfile(p)
+	return "", failure("PROFILE_NOT_FOUND", "The selected profile does not exist.")
+}
+
+func Resolve(doc Document, explicitName, envName string) (string, Profile, error) {
+	name, err := doc.SelectedName(explicitName, envName)
 	if err != nil {
 		return "", Profile{}, err
 	}
-	return name, p, nil
+	entry := doc.Profiles[name]
+	if message := entry.Problem(name); message != "" {
+		return "", Profile{}, failure("CONFIG_INVALID", message)
+	}
+	return name, entry.Profile, nil
 }

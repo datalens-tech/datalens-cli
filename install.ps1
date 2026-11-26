@@ -92,14 +92,12 @@
             [IO.File]::Move($stage, $target)
         }
         Write-Output "Installed DataLens CLI v$version to $target"
-        $setupCommand = 'datalens'
         if ($installDir -notin ($env:PATH -split ';')) {
             Write-Output "Add this directory to your PATH: $installDir"
-            $escapedTarget = [Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($target)
-            $setupCommand = "& '$escapedTarget'"
         }
+        $escapedTarget = [Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($target)
         Write-Output "To configure a profile, run:"
-        Write-Output "  $setupCommand setup"
+        Write-Output "  & '$escapedTarget' setup"
     } finally {
         if ([IO.File]::Exists($stage)) { [IO.File]::Delete($stage) }
         [IO.Directory]::Delete($temp, $true)

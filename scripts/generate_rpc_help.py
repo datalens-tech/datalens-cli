@@ -64,9 +64,27 @@ def request_example(media, schema, components):
     return None
 
 
-def catalog(spec):
+def connection_components(path, version):
+    source = json.loads(path.read_text(encoding="utf-8"))
+    if "openapi" in source:
+        if source["info"]["version"] != version:
+            raise ValueError(f"{path}: expected API version {version!r}, got {source['info']['version']!r}")
+        source = source["components"]["schemas"]
+    components = {}
+    pending = {"ConnectionCreate", "ConnectionUpdate"}
+    while pending:
+        name = pending.pop()
+        if name not in source:
+            raise ValueError(f"{path}: missing connection schema {name!r}")
+        components[name] = source[name]
+        _, refs = schema_with_refs(source[name])
+        pending.update(refs - components.keys())
+    return components
+
+
+def catalog(spec, connections=None):
     components = spec["components"]
-    sources = components["schemas"]
+    sources = components["schemas"] if connections is None else {**components["schemas"], **connections}
     schemas = {}
     dependencies = {}
     actions = {}
@@ -128,7 +146,11 @@ def main():
     parser = argparse.ArgumentParser(description="Generate offline RPC help from DataLens SDK OpenAPI snapshots.")
     parser.add_argument("spec_dir", type=Path, help="datalens-sdk/spec directory")
     parser.add_argument("--yateam-spec", type=Path, help="also refresh the Yandex Team catalog from this SDK OpenAPI snapshot")
+    parser.add_argument("--enterprise-api", type=Path, required=True, help="Enterprise Swagger JSON or exported BI schema components")
+    parser.add_argument("--yateam-api", type=Path, help="Yandex Team Swagger JSON or exported BI schema components")
     args = parser.parse_args()
+    if bool(args.yateam_spec) != bool(args.yateam_api):
+        parser.error("--yateam-spec and --yateam-api must be supplied together")
     source = (INTERNAL_DIR / "buildinfo" / "buildinfo.go").read_text(encoding="utf-8")
     match = re.search(r'^const APIVersion = "([0-9]+)"$', source, re.MULTILINE)
     if match is None:
@@ -138,12 +160,17 @@ def main():
     sources = {"cloud": args.spec_dir / "yacloud.json", "enterprise": args.spec_dir / "enterprise.json"}
     if args.yateam_spec is not None:
         sources["yateam"] = args.yateam_spec
+    apis = {"enterprise": args.enterprise_api, "yateam": args.yateam_api}
     for edition, path in sources.items():
         spec = json.loads(path.read_text(encoding="utf-8"))
         version = spec.get("info", {}).get("version")
         if version != expected_version:
             parser.error(f"{path}: expected API version {expected_version!r}, got {version!r}")
-        catalogs[edition] = catalog(spec)
+        try:
+            connections = connection_components(apis[edition], expected_version) if edition in apis else None
+        except ValueError as exc:
+            parser.error(str(exc))
+        catalogs[edition] = catalog(spec, connections)
     for edition, data in catalogs.items():
         write_catalog(data, CATALOG_DIR / f"{edition}.json")
 

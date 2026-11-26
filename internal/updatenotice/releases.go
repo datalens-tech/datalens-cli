@@ -53,7 +53,7 @@ func Latest(ctx context.Context, client *http.Client, current string) (string, e
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var newest string
-	for page := 1; page <= 5; page++ {
+	for page := 1; ; page++ {
 		entries, more, err := releasePage(ctx, client, page)
 		if err != nil {
 			return "", err

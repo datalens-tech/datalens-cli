@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/datalens-tech/datalens-cli/internal/cli"
+	"github.com/datalens-tech/datalens-cli/internal/rpchelp"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -86,9 +87,23 @@ func TestRPCValidatesBeforeAuthentication(t *testing.T) {
 		result := execute(t.Context(), options, args...)
 		assertFailure(t, result, 2, "INVALID_USAGE")
 		msg := document(t, result.stderr)["error"].(map[string]any)["message"].(string)
-		if !strings.Contains(msg, `datalens rpc getDashboard '{"dashboardId":"your-dashboard-id"}' --profile=team`) {
+		if !strings.Contains(msg, rpchelp.ExampleCommands("getDashboard", `{"dashboardId":"your-dashboard-id"}`, " --profile=team")) {
 			t.Errorf("missing minimal invocation: %s", msg)
 		}
+	}
+}
+
+func TestMissingOrganizationPrecedesTokenCommand(t *testing.T) {
+	for _, installation := range []string{"cloud", "stackland"} {
+		options := testOptions(map[string]string{"DATALENS_CONFIG_DIR": filepath.Join(t.TempDir(), "config")})
+		args := []string{"profiles", "create", "work", "--installation-type=" + installation, "--token-cmd=datalens-missing-test-helper"}
+		if installation == "stackland" {
+			args = append(args, "--endpoint=https://stack.example.org")
+		}
+		if got := execute(t.Context(), options, args...); got.code != 0 {
+			t.Fatalf("create: %#v", got)
+		}
+		assertFailure(t, execute(t.Context(), options, "rpc", "getWorkbook", `{"workbookId":"test"}`, "--format=json"), 2, "ORGANIZATION_REQUIRED")
 	}
 }
 
@@ -273,7 +288,7 @@ func TestRPCInputAndOfflineHelp(t *testing.T) {
 		if result.code != 0 || result.stderr != "" {
 			t.Fatalf("help %v: %#v", args, result)
 		}
-		for _, text := range []string{"Usage:", "datalens rpc getTenantDetails", "datalens rpc getWorkbook '{", `"workbookId"`} {
+		for _, text := range []string{"Usage:", "datalens rpc getTenantDetails", rpchelp.ExampleCommands("getWorkbook", `{"workbookId":"your-workbook-id"}`, "")} {
 			if !strings.Contains(result.stdout, text) {
 				t.Errorf("help %v is missing %q: %s", args, text, result.stdout)
 			}
@@ -329,7 +344,7 @@ func TestRPCActionHelp(t *testing.T) {
 	}{
 		{
 			action: "getWorkbook", flag: "--help",
-			want: []string{"Returns the specified workbook.", "Example:", "datalens rpc getWorkbook '{",
+			want: []string{"Returns the specified workbook.", "Example:", rpchelp.ExampleCommands("getWorkbook", `{"workbookId":"your-workbook-id"}`, ""),
 				"Required: workbookId", "includePermissionsInfo", "datalens schema show getWorkbook"},
 		},
 		{

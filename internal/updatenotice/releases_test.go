@@ -59,7 +59,10 @@ func TestLatestAcrossPages(t *testing.T) {
 			case 1:
 				header.Set("Link", `<https://api.github.com/next>; rel="next"`)
 				body = `[{"tag_name":"v1.0.2"},{"tag_name":"v8.0.0","draft":true},{"tag_name":"v7.0.0","prerelease":true},{"tag_name":"v2.0.0-beta.2","prerelease":true}]`
-			case 2:
+			case 2, 3, 4, 5:
+				header.Set("Link", `<https://api.github.com/next>; rel="next"`)
+				body = `[]`
+			case 6:
 				body = `[{"tag_name":"v2.0.0-beta.10","prerelease":true},{"tag_name":"v1.0.10"},{"tag_name":"5.0.0"},{"tag_name":"v9.0.0-beta.preview","prerelease":true},{"tag_name":"v9.0.0+build"}]`
 			default:
 				t.Fatalf("unexpected page %d", page)
@@ -67,7 +70,7 @@ func TestLatestAcrossPages(t *testing.T) {
 			return &http.Response{StatusCode: 200, Header: header, Body: io.NopCloser(strings.NewReader(body))}, nil
 		})}
 		got, err := Latest(context.Background(), client, tc.current)
-		if err != nil || got != tc.want || page != 2 {
+		if err != nil || got != tc.want || page != 6 {
 			t.Errorf("Latest(%q) = %q, %v (pages %d), want %q", tc.current, got, err, page, tc.want)
 		}
 	}

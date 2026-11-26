@@ -53,7 +53,7 @@ func TestPersistenceAndProfileIsolation(t *testing.T) {
 	if err := s.Use(t.Context(), "team"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Delete(t.Context(), "cloud"); err != nil {
+	if _, err := s.Delete(t.Context(), "cloud", nil); err != nil {
 		t.Fatal(err)
 	}
 	doc, err = s.Load()
@@ -63,7 +63,7 @@ func TestPersistenceAndProfileIsolation(t *testing.T) {
 	if doc.Profiles["team"].APIEndpoint != teamAPI || doc.Profiles["team"].Endpoint != teamUI {
 		t.Fatal("incorrect team endpoint")
 	}
-	if _, err := s.Delete(t.Context(), "team"); err != nil {
+	if _, err := s.Delete(t.Context(), "team", nil); err != nil {
 		t.Fatal(err)
 	}
 	doc, err = s.Load()
@@ -77,8 +77,8 @@ func TestPersistenceAndProfileIsolation(t *testing.T) {
 }
 
 func TestResolvePrecedenceAndNoFallback(t *testing.T) {
-	doc := Document{Version: SchemaVersion, CurrentProfile: "saved", Profiles: map[string]Profile{
-		"flag": {Installation: "yateam"}, "env": {Installation: "cloud", OrganizationID: "org"}, "saved": {Installation: "on-premises", Endpoint: "https://example.com"},
+	doc := Document{Version: SchemaVersion, CurrentProfile: "saved", Profiles: map[string]SavedProfile{
+		"flag": {Profile: Profile{Installation: "yateam"}}, "env": {Profile: Profile{Installation: "cloud", OrganizationID: "org"}}, "saved": {Profile: Profile{Installation: "on-premises", Endpoint: "https://example.com"}},
 	}}
 	for _, tc := range []struct{ flag, env, want string }{{"flag", "env", "flag"}, {"", "env", "env"}, {"", "", "saved"}} {
 		name, p, err := Resolve(doc, tc.flag, tc.env)
@@ -173,7 +173,7 @@ func TestDeleteActiveProfile(t *testing.T) {
 	for _, tc := range []struct{ removed, active string }{
 		{"team", "alpha"}, {"alpha", defaultName}, {defaultName, "zulu"}, {"zulu", ""},
 	} {
-		if empty, err := s.Delete(t.Context(), tc.removed); err != nil || empty != (tc.active == "") {
+		if empty, err := s.Delete(t.Context(), tc.removed, nil); err != nil || empty != (tc.active == "") {
 			t.Fatalf("delete %q: empty = %t, error = %v", tc.removed, empty, err)
 		}
 		doc, err := s.Load()
@@ -184,7 +184,7 @@ func TestDeleteActiveProfile(t *testing.T) {
 			t.Fatalf("removed profile %q still exists", tc.removed)
 		}
 	}
-	_, err := s.Delete(t.Context(), defaultName)
+	_, err := s.Delete(t.Context(), defaultName, nil)
 	requireCode(t, err, "NO_PROFILES")
 }
 
@@ -192,8 +192,10 @@ func TestLoadLegacyActiveProfile(t *testing.T) {
 	for _, tc := range []struct {
 		current, profiles, want string
 	}{
-		{"default", "{}", ""},
-		{"default", `{"z":{"installationType":"cloud"},"a":{"installationType":"yateam"}}`, "a"},
+		{"", "{}", ""},
+		{"default", "{}", "default"},
+		{"default", `{"z":{"installationType":"cloud"},"a":{"installationType":"yateam"}}`, "default"},
+		{"", `{"a":{"installationType":"yateam"}}`, "default"},
 		{"", `{"a":{"installationType":"yateam"},"default":{"installationType":"cloud"}}`, "default"},
 	} {
 		s := testStore(t)
@@ -212,6 +214,19 @@ func TestLoadLegacyActiveProfile(t *testing.T) {
 		content, err := os.ReadFile(file)
 		if err != nil || string(content) != raw {
 			t.Fatalf("loading legacy configuration modified it: %v", err)
+		}
+		if tc.want == "default" {
+			_, p, err := Resolve(doc, "", "")
+			if err != nil || p.Installation != "cloud" || p.Endpoint != cloudUI || p.APIEndpoint != cloudAPI {
+				t.Fatalf("legacy default = %+v, %v", p, err)
+			}
+			if _, err := s.Delete(t.Context(), "default", nil); err != nil {
+				t.Fatal(err)
+			}
+			doc, err = s.Load()
+			if _, exists := doc.Profiles["default"]; err != nil || exists {
+				t.Fatalf("deleted default returned: %+v, %v", doc, err)
+			}
 		}
 	}
 }
@@ -262,12 +277,12 @@ func TestInvalidMutationsPreserveConfiguration(t *testing.T) {
 	requireCode(t, s.Create(t.Context(), "team", Profile{Installation: "yateam"}), "PROFILE_EXISTS")
 	requireCode(t, s.CreateAndUse(t.Context(), "team", Profile{Installation: "cloud"}), "PROFILE_EXISTS")
 	requireCode(t, s.Use(t.Context(), "missing"), "PROFILE_NOT_FOUND")
-	_, err = s.Delete(t.Context(), "missing")
+	_, err = s.Delete(t.Context(), "missing", nil)
 	requireCode(t, err, "PROFILE_NOT_FOUND")
 	for _, name := range []string{"", ".", "..", "../escape", "name space", "name\nline"} {
 		requireCode(t, s.Create(t.Context(), name, Profile{Installation: "yateam"}), "PROFILE_INVALID")
 		requireCode(t, s.Use(t.Context(), name), "PROFILE_INVALID")
-		_, err := s.Delete(t.Context(), name)
+		_, err := s.Delete(t.Context(), name, nil)
 		requireCode(t, err, "PROFILE_INVALID")
 	}
 	after, err := os.ReadFile(filepath.Join(s.Dir, "config.json"))
@@ -307,18 +322,12 @@ func TestInvalidDocumentsArePreserved(t *testing.T) {
 		{`{"version":3,"profiles":{},"future":"secret"}`, "CONFIG_VERSION_UNSUPPORTED", "supports schema 3"},
 		{`{"version":0,"profiles":{}}`, "CONFIG_VERSION_UNSUPPORTED", "datalens setup"},
 		{`{"profiles":{}}`, "CONFIG_VERSION_UNSUPPORTED", "datalens setup"},
-		{`{"version":1,"profiles":{"corp":{"installation":"standalone","endpoint":"https://corp.example.com/api"}}}`, "CONFIG_VERSION_UNSUPPORTED", "datalens setup"},
+		{`{"version":1,"profiles":{"corp":{"installation":"standalone","endpoint":"https://corp.example.com","apiEndpoint":"https://api.example.com"}}}`, "CONFIG_VERSION_UNSUPPORTED", "--api-endpoint"},
 		{`{"version":2,"profiles":{`, "CONFIG_INVALID", ""},
 		{`{"version":2,"profiles":{}} {"extra":true}`, "CONFIG_INVALID", ""},
 		{`{"version":2,"profiles":null}`, "CONFIG_INVALID", ""},
 		{`{"version":2,"profiles":{},"unknown":true}`, "CONFIG_INVALID", ""},
-		{`{"version":2,"profiles":{"team":{"installation":"cloud"}}}`, "CONFIG_INVALID", ""},
-		{`{"version":2,"profiles":{"team":{"installationType":"cloud","unknown":true}}}`, "CONFIG_INVALID", ""},
-		{`{"version":2,"profiles":{"team":{"installationType":" \t "}}}`, "CONFIG_INVALID", ""},
-		{`{"version":2,"profiles":{"team":{"installationType":"unknown"}}}`, "CONFIG_INVALID", "Installation type must be"},
 		{`{"version":2,"profiles":{},"currentProfile":"missing"}`, "CONFIG_INVALID", "Set currentProfile"},
-		{`{"version":2,"profiles":{"work":{"installationType":"cloud","endpoint":"https://datalens.ru?token=secret"}}}`, "CONFIG_INVALID", `profile "work"`},
-		{`{"version":2,"profiles":{"work":{"installationType":"on-premises","serviceAccount":{"privateKeyFile":"secret"}}}}`, "CONFIG_INVALID", "serviceAccount.privateKeyFile"},
 	} {
 		t.Run(tc.content, func(t *testing.T) {
 			s := testStore(t)
@@ -361,7 +370,7 @@ func TestOversizedMutationPreservesConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc.Profiles["large"] = large
+	doc.Profiles["large"] = SavedProfile{Profile: large}
 	encoded, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -391,7 +400,7 @@ func TestExpiredMutationDoesNotCreateDirectory(t *testing.T) {
 	mutations := []func() error{
 		func() error { return s.Create(ctx, "team", Profile{}) },
 		func() error { return s.Use(ctx, defaultName) },
-		func() error { _, err := s.Delete(ctx, "team"); return err },
+		func() error { _, err := s.Delete(ctx, "team", nil); return err },
 	}
 	for _, mutate := range mutations {
 		if err := mutate(); !errors.Is(err, context.DeadlineExceeded) {
@@ -582,4 +591,65 @@ func TestPrivatePermissionsAndUnsafePaths(t *testing.T) {
 		requireCode(t, err, "CONFIG_UNSAFE_PATH")
 		requireCode(t, other.Create(t.Context(), "other", Profile{Installation: "yateam"}), "CONFIG_UNSAFE_PATH")
 	})
+}
+
+func TestInvalidProfilesAreIsolatedAndPreserved(t *testing.T) {
+	for _, tc := range []struct{ raw, hint string }{
+		{`{"installation":"cloud"}`, "profile fields"},
+		{`{"installationType":"cloud","futureToken":"secret","number":9007199254740993}`, "profile fields"},
+		{`{"installationType":" \t "}`, "installationType"},
+		{`{"installationType":"other","tokenCommand":["secret"]}`, "Installation type must be"},
+		{`{"installationType":"cloud","endpoint":"https://datalens.ru?token=secret"}`, "Endpoints must be"},
+		{`{"installationType":"on-premises","serviceAccount":{"privateKeyFile":"secret"}}`, "serviceAccount.privateKeyFile"},
+		{`null`, "installationType"},
+		{`"secret"`, "profile fields"},
+	} {
+		t.Run(tc.hint, func(t *testing.T) {
+			s := testStore(t)
+			if err := os.Mkdir(s.Dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(s.Dir, "config.json")
+			data := `{"version":2,"currentProfile":"bad","profiles":{"bad":` + tc.raw + `,"team":{"installationType":"yateam"}}}`
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			doc, err := s.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = Resolve(doc, "", "")
+			requireCode(t, err, "CONFIG_INVALID")
+			if !strings.Contains(err.Error(), `profile "bad"`) || !strings.Contains(err.Error(), tc.hint) || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("unexpected repair message: %v", err)
+			}
+			name, p, err := Resolve(doc, "team", "")
+			if err != nil || name != "team" || p.Installation != "yateam" {
+				t.Fatalf("valid profile = %q, %+v, %v", name, p, err)
+			}
+			if err := s.Create(t.Context(), "cloud", Profile{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Use(t.Context(), "team"); err != nil {
+				t.Fatal(err)
+			}
+			requireCode(t, s.Use(t.Context(), "bad"), "CONFIG_INVALID")
+			encoded, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saved struct{ Profiles map[string]json.RawMessage }
+			if err := json.Unmarshal(encoded, &saved); err != nil {
+				t.Fatal(err)
+			}
+			compact, err := json.Marshal(saved.Profiles["bad"])
+			if err != nil || string(compact) != tc.raw {
+				t.Fatalf("invalid profile changed: %s, %v", compact, err)
+			}
+			previous := doc.Profiles["bad"]
+			if empty, err := s.Delete(t.Context(), "bad", &previous); err != nil || empty {
+				t.Fatalf("delete broken profile after unrelated writes: empty=%t, err=%v", empty, err)
+			}
+		})
+	}
 }

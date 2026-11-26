@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -36,7 +37,14 @@ func TestExamplePreservesJSONInShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(text, `datalens rpc test '{"id":9007199254740993,"name":"O'\''Brien"}'`) {
+	want := `datalens rpc test '{"id":9007199254740993,"name":"O'\''Brien"}'`
+	if !strings.Contains(text, want) {
+		t.Fatalf("missing POSIX example: %s", text)
+	}
+	if runtime.GOOS == "windows" {
+		want = `datalens rpc test --% "{\"id\":9007199254740993,\"name\":\"O'Brien\"}"`
+	}
+	if !strings.Contains(text, want) {
 		t.Fatalf("example: %s", text)
 	}
 }
@@ -88,7 +96,7 @@ func TestCompactArgumentHelp(t *testing.T) {
 			if strings.Contains(text.String(), "$defs") {
 				t.Fatal("full schema leaked into compact help")
 			}
-			if tc.action == "getWorkbook" && !strings.Contains(text.String(), `datalens rpc getWorkbook '{"workbookId":"your-workbook-id"}' --profile=work`) {
+			if tc.action == "getWorkbook" && !strings.Contains(text.String(), ExampleCommands("getWorkbook", `{"workbookId":"your-workbook-id"}`, " --profile=work")) {
 				t.Fatal("example lost explicit profile")
 			}
 		})

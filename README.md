@@ -18,11 +18,7 @@ curl -fsSL https://github.com/datalens-tech/datalens-cli/releases/latest/downloa
 ([Net.WebClient]::new()).DownloadString('https://github.com/datalens-tech/datalens-cli/releases/latest/download/install.ps1') | Invoke-Expression
 ```
 
-After installation, run the setup command printed by the installer. If `datalens` is on your `PATH`, use:
-
-```sh
-datalens setup
-```
+After installation, run the setup command printed by the installer. It uses the full path to the CLI you just installed.
 
 Choose your installation and how to supply its token. For Yandex Cloud, you can use a configured Yandex Cloud CLI (`yc iam create-token`) and enter your organization ID. For an on-premises installation, enter its UI address. After choosing a profile name, review the endpoints and authentication settings. Press Enter to create and activate the profile, or type `n` to cancel. To make your first Cloud request, run:
 
@@ -44,9 +40,15 @@ datalens schema show getWorkbook
 datalens rpc getWorkbook '{"workbookId":"your-workbook-id"}'
 ```
 
-Pass the JSON object after the action name. In bash or zsh, wrap it in single quotes so spaces and double quotes reach the CLI intact. Omit the object to use `{}`. Existing scripts can still pass the object with `--args`.
+Pass the JSON object after the action name. In bash or zsh, wrap it in single quotes so spaces and double quotes reach the CLI intact. On Windows, `rpc ACTION --help` shows commands for both PowerShell and Git Bash. Copy the one for your shell. Omit the object to use `{}`. Existing scripts can still pass the object with `--args`.
 
-Before sending a request, the CLI checks the arguments against the selected installation’s bundled schema. On error it shows what to fix and, when available, a minimal example with values you can replace. You can still call actions for which the catalog has no argument schema.
+Read up to 16 MiB of JSON with `datalens rpc getWorkbook @request.json` (in PowerShell, quote `'@request.json'`). Use `-` to read the object from stdin:
+
+```sh
+printf '%s' '{"workbookId":"your-workbook-id"}' | datalens rpc getWorkbook -
+```
+
+Before sending a request, the CLI checks the arguments against the selected installation’s bundled schema. On error it shows what to fix and, when available, a minimal example with values you can replace. Actions without a bundled schema can still be called. If your server accepts a field the bundled schema rejects, pass `--no-validate` for that RPC call. The input must still be a UTF-8 JSON object.
 
 ### Profiles and authentication
 
@@ -68,7 +70,7 @@ datalens profiles activate work
 
 Profile selection order is `--profile`, `DATALENS_PROFILE`, then the active profile. Cloud and Stackland use the organization saved with `--organization`, or `DATALENS_ORG_ID` if none was saved.
 
-The first configured source supplies the token.
+The CLI uses the first configured token source. A profile with a token command or service account uses it even when a token is set in the environment.
 
 1. `--auth-token` for the current call.
 2. The selected profile’s token command or service account key.
@@ -78,11 +80,17 @@ The first configured source supplies the token.
 
 A token command runs once per API call, directly without a shell. Quote arguments containing spaces inside the command string. To select a specific `yc` profile, use e.g. `--token-cmd='yc iam create-token --profile work-cloud'`. The program must exit successfully and print one token to stdout. If it fails, the request stops. The CLI never saves the returned token.
 
-To change a profile’s settings, delete it and create it again. Use `datalens profiles delete work --confirm=yes` in scripts. You can delete any profile, including one named `default`. When you delete the active profile, the first remaining profile in alphabetical order becomes active.
+Use `profiles list` to find a profile with invalid settings. You can delete that profile or continue using another one. To change a profile’s settings, delete it and create it again. Use `datalens profiles delete work --confirm=yes` in scripts. You can delete any profile, including one named `default`. When you delete the active profile, the first remaining profile in alphabetical order becomes active.
 
 ### Scripting
 
-RPC responses go to stdout as indented JSON. Use `--format=json` for compact JSON and structured errors on stderr. The default `--timeout` is 30 seconds and covers both the token command and the request. Interactive setup waits for your answers unless you pass `--timeout`.
+RPC responses go to stdout as indented JSON. Use `--format=json` for compact JSON and structured errors on stderr. The default `--timeout` is 30 seconds for command operations, including the token command and HTTP request. Once the result is ready, a slow stdout reader can finish at its own pace. Interactive setup waits for your answers unless you pass `--timeout`.
+
+On an HTTP failure, the structured error includes `httpStatus` and, when available, the API’s code, message, and request ID. For example:
+
+```json
+{"error":{"code":"API_ERROR","message":"The DataLens API returned HTTP 404.","httpStatus":404,"apiCode":"NOT_FOUND","apiMessage":"Workbook not found","requestId":"req-123"}}
+```
 
 Exit codes are `0` for success, `1` for runtime failures, `2` for usage or configuration errors, `3` for authentication failures, and `130` or `143` for SIGINT or SIGTERM.
 
@@ -168,7 +176,7 @@ export PATH="$PWD/bin/$(go env GOOS)-$(go env GOARCH):$PATH"
 datalens version
 ```
 
-Run `make check` for formatting and vet, `make test` for Go tests with the race detector, and `python3 -B scripts/test_install.py` for shell installer tests. CI also installs the packaged Windows binary with PowerShell, runs `datalens version`, and creates a profile.
+Run `make check` for formatting and vet, `make test` for Go tests with the race detector, and `python3 -B scripts/test_install.py` for shell installer tests. CI runs the Go tests on Windows and uses PowerShell to install stable and beta packages and check their embedded versions.
 
 ### Architecture
 
@@ -178,12 +186,16 @@ Run `make check` for formatting and vet, `make test` for Go tests with the race 
 
 ### Refresh the RPC catalogs
 
-Regenerate the Cloud and on-premises catalogs from the SDK snapshots matching the CLI’s pinned API version. To include Yandex Team, append `--yateam-spec /path/to/yateam.json` to the generator command. When changing the pinned API version, refresh all three catalogs together. Update the snapshot link when its source revision changes. [Public SDK snapshots](https://github.com/datalens-tech/datalens-sdk/tree/6e693fa5b40b3cb463a9eb2fb0c5c4a09bae9506/spec)
+The SDK snapshots supply the RPC actions and their argument schemas. For on-premises and Yandex Team, the generator takes `ConnectionCreate`, `ConnectionUpdate` and the schemas they reference from that installation’s Swagger export. These components define the available connectors and their fields. Use exports for the CLI’s pinned API version. [Public SDK snapshots](https://github.com/datalens-tech/datalens-sdk/tree/6e693fa5b40b3cb463a9eb2fb0c5c4a09bae9506/spec)
+
+Save the on-premises export from the installation’s UI at `/api/docs/swagger/3/json/` as `enterprise-api.json`. To include Yandex Team, also pass `--yateam-spec /path/to/yateam.json --yateam-api yateam-api.json` with the internal SDK snapshot and the Team API export. Refresh all three catalogs when changing the pinned API version. [Yandex Team API export](https://api.datalens.yandex.net/3/json/)
 
 ```sh
-python3 scripts/generate_rpc_help.py ../datalens-sdk/spec
+python3 scripts/generate_rpc_help.py ../datalens-sdk/spec --enterprise-api enterprise-api.json
 go test ./internal/rpchelp ./internal/cli
 ```
+
+For offline regeneration from the pinned UI source, see [AGENTS.md](AGENTS.md#offline-connection-schemas).
 
 ### Release builds
 

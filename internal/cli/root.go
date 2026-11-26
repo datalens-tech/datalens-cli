@@ -83,13 +83,13 @@ func Execute(ctx context.Context, args []string, options Options) int {
 		commandContext, cancel = context.WithTimeout(ctx, commandTimeout)
 		defer cancel()
 	}
-	stdout := &commandStream{ctx: commandContext, dest: options.Out}
+	stdout := &commandStream{ctx: ctx, dest: options.Out}
 	stderr := &commandStream{ctx: commandContext, dest: options.Err}
 	a.options.Err = stderr
 	root.SetIn(options.In)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	a.writer = output.Writer{Out: stdout, Err: stderr, Format: "text"}
+	a.writer = output.Writer{Out: stdout, Err: &commandStream{ctx: ctx, dest: options.Err}, Format: "text"}
 	if a.format == "json" {
 		a.writer.Format = "json"
 	}
@@ -139,15 +139,13 @@ func Execute(ctx context.Context, args []string, options Options) int {
 			cmd, err = root.ExecuteContextC(commandContext)
 		}
 	}
-	if cause := context.Cause(commandContext); cause != nil {
-		err = cause
-		var stop context.CancelFunc
-		// Allow the final error to reach stderr even after the command timed out.
-		stderr.ctx, stop = context.WithTimeout(context.WithoutCancel(commandContext), 100*time.Millisecond)
-		defer stop()
-	}
 	if err == nil {
 		err = errors.Join(helpErr, stdout.err, stderr.err)
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		err = cause
+	} else if closedOutputPipe(stdout.err) {
+		return 0
 	}
 	if err == nil {
 		if !shownHelp && !cmd.Hidden && isTerminal && a.shouldNotifyUpdate() {
@@ -155,6 +153,14 @@ func Execute(ctx context.Context, args []string, options Options) int {
 		}
 		return 0
 	}
+	if cause := context.Cause(commandContext); cause != nil {
+		err = cause
+		var stop context.CancelFunc
+		// Allow the final error to reach stderr even after the command timed out.
+		stderr.ctx, stop = context.WithTimeout(context.WithoutCancel(commandContext), 100*time.Millisecond)
+		defer stop()
+	}
+	a.writer.Err = stderr
 	failure := classifyFailure(err)
 	if a.writer.Failure(failure) != nil {
 		if cause := context.Cause(commandContext); cause != nil {

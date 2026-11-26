@@ -35,7 +35,9 @@ func exchangeServiceAccountToken(ctx context.Context, transport http.RoundTrippe
 		return "", err
 	}
 	body, _ := json.Marshal(map[string]string{"saToken": assertion})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint.String(), bytes.NewReader(body))
+	requestCtx, cancelRequest := context.WithCancel(ctx)
+	defer cancelRequest()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, tokenEndpoint.String(), bytes.NewReader(body))
 	if err != nil {
 		return "", &output.Error{Code: "PROFILE_INVALID", Message: "Cannot build the service account token exchange request.", ExitCode: 2}
 	}
@@ -51,10 +53,11 @@ func exchangeServiceAccountToken(ctx context.Context, transport http.RoundTrippe
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		failure := &output.Error{Code: "API_ERROR", Message: fmt.Sprintf("Service account token exchange returned HTTP %d.", resp.StatusCode), ExitCode: 1}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return "", &output.Error{Code: "AUTH_REJECTED", Message: "The API rejected the service account credentials.", ExitCode: 3}
+			failure = &output.Error{Code: "AUTH_REJECTED", Message: fmt.Sprintf("The API rejected the service account credentials (HTTP %d).", resp.StatusCode), ExitCode: 3}
 		}
-		return "", &output.Error{Code: "API_ERROR", Message: fmt.Sprintf("Service account token exchange returned HTTP %d.", resp.StatusCode), ExitCode: 1}
+		return "", readHTTPError(ctx, resp, cancelRequest, assertion, failure)
 	}
 	const maxResponse = maxTokenSize + 4096
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))

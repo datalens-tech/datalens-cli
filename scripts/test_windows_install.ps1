@@ -5,11 +5,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ciAssets = (Resolve-Path -LiteralPath $Assets).Path
+$releaseRoot = (Resolve-Path -LiteralPath $Assets).Path
+$ciAssets = Join-Path $releaseRoot $Version
 $ciArchive = "datalens_${Version}_windows_amd64.zip"
 $ciReleases = 'https://github.com/datalens-tech/datalens-cli/releases'
 $ciManifestUri = "$ciReleases/latest/download/SHA256SUMS"
-$ciManifestArchive = $ciArchive
 $ciArchiveUri = "$ciReleases/download/v$Version/$ciArchive"
 $ciBreakChecksum = $false
 $ciOtherArchives = foreach ($other in "$Version-beta.10", "v$Version", "0$Version", "$Version+local") {
@@ -18,6 +18,36 @@ $ciOtherArchives = foreach ($other in "$Version-beta.10", "v$Version", "0$Versio
 
 function gh { throw 'Unexpected fallback to GitHub CLI during the offline install test.' }
 
+function Test-RpcExamples {
+    $ErrorActionPreference = 'Continue'
+    $helpText = (& $exe rpc getWorkbook --profile=smoke --help) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw 'Could not get RPC help.' }
+    $errorText = (& $exe rpc getDashboard --profile=smoke --auth-token= --format=json 2>&1) -join "`n"
+    $problem = ($errorText | ConvertFrom-Json -ErrorAction Stop).error
+    if ($LASTEXITCODE -ne 2 -or $problem.code -ne 'INVALID_USAGE') { throw 'Expected a missing dashboard ID.' }
+
+    foreach ($text in $helpText, $problem.message) {
+        if ($text -notmatch '(?m)^  PowerShell:\r?\n    (datalens rpc (?:getWorkbook|getDashboard) [^\r\n]+ --profile=smoke)\r?$') {
+            throw 'Missing RPC example with the selected profile.'
+        }
+        $example = [scriptblock]::Create($Matches[1].Replace('your-workbook-id', 'workbook with spaces') + ' --auth-token= --format=json')
+        $result = (& $example 2>&1) -join "`n"
+        if ($LASTEXITCODE -ne 3 -or ($result | ConvertFrom-Json -ErrorAction Stop).error.code -ne 'AUTH_TOKEN_INVALID') {
+            throw "The generated PowerShell example failed argument validation: $result"
+        }
+        if ($text -notmatch '(?m)^  Git Bash:\r?\n    (datalens rpc (?:getWorkbook|getDashboard) [^\r\n]+ --profile=smoke)\r?$') {
+            throw 'Missing Git Bash example with the selected profile.'
+        }
+        $script = Join-Path $sandbox 'rpc-example.sh'
+        [IO.File]::WriteAllText($script, $Matches[1] + ' --auth-token= --format=json')
+        $bash = Join-Path $env:ProgramFiles 'Git\bin\bash.exe'
+        $result = (& $bash $script 2>&1) -join "`n"
+        if ($LASTEXITCODE -ne 3 -or ($result | ConvertFrom-Json -ErrorAction Stop).error.code -ne 'AUTH_TOKEN_INVALID') {
+            throw "The generated Git Bash example failed argument validation: $result"
+        }
+    }
+}
+
 function Invoke-WebRequest {
     [CmdletBinding()]
     param([uri]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
@@ -25,7 +55,7 @@ function Invoke-WebRequest {
     switch ($Uri.AbsoluteUri) {
         $ciManifestUri {
             $manifest = [IO.File]::ReadAllText((Join-Path $ciAssets 'SHA256SUMS'))
-            $entries = @($ciOtherArchives) + $manifest.Replace($ciArchive, $ciManifestArchive)
+            $entries = @($ciOtherArchives) + $manifest
             [IO.File]::WriteAllText($OutFile, ($entries -join "`n"))
         }
         $ciArchiveUri {
@@ -62,7 +92,7 @@ try {
         throw 'Unexpected build information from the installed release.'
     }
 
-    & $exe profiles create smoke --installation-type=cloud
+    & $exe profiles create smoke --installation-type=cloud --organization=smoke-org
     if ($LASTEXITCODE -ne 0) { throw 'Could not create the smoke profile.' }
     $config = Join-Path $env:APPDATA 'datalens\config.json'
     $profiles = (Get-Content -LiteralPath $config -Raw | ConvertFrom-Json).profiles
@@ -73,9 +103,9 @@ try {
     $env:DATALENS_CLI_INSTALL_VERSION = $Version
     $ciManifestUri = "$ciReleases/download/v$Version/SHA256SUMS"
     $messages = & $install
-    if ($messages[-1].Trim() -ne 'datalens setup') { throw 'Incorrect setup command for a binary on PATH.' }
+    if ($messages[-1].Trim() -ne "& '$quotedExe' setup") { throw 'Incorrect setup command for a binary on PATH.' }
     if ((Get-FileHash -LiteralPath $config).Hash -ne $configHash) { throw 'Reinstall changed the profile.' }
-    $exeHash = (Get-FileHash -LiteralPath $exe).Hash
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { Test-RpcExamples }
 
     $beta = "$Version-beta.2"
     $env:DATALENS_CLI_INSTALL_VERSION = "v$beta"
@@ -87,10 +117,22 @@ try {
         if ($_.Exception.Message -notlike 'Missing Windows/* archive in SHA256SUMS.') { throw }
     }
 
-    $ciManifestArchive = "datalens_${beta}_windows_amd64.zip"
-    $ciArchiveUri = "$ciReleases/download/v$beta/$ciManifestArchive"
+    $ciAssets = Join-Path $releaseRoot $beta
+    $ciArchive = "datalens_${beta}_windows_amd64.zip"
+    $ciArchiveUri = "$ciReleases/download/v$beta/$ciArchive"
+    $oldBin = Join-Path $sandbox 'old-bin'
+    $null = [IO.Directory]::CreateDirectory($oldBin)
+    Copy-Item -LiteralPath $exe -Destination $oldBin
+    $env:PATH = $oldBin + ';' + $env:PATH
     $messages = & $install
     if ($messages[0] -ne "Installed DataLens CLI v$beta to $exe") { throw 'Unexpected pinned beta installation result.' }
+    if ($messages[-1].Trim() -ne "& '$quotedExe' setup") { throw 'Setup would run another executable from PATH.' }
+
+    $info = & $exe version --format=json | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $info.version -ne $beta -or $info.revision -ne $Revision) {
+        throw 'The installed binary is not the pinned beta build.'
+    }
+    $exeHash = (Get-FileHash -LiteralPath $exe).Hash
 
     $ciBreakChecksum = $true
     try {
@@ -116,3 +158,5 @@ try {
     foreach ($name in $savedEnv.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnv[$name]) }
     if (Test-Path -LiteralPath $sandbox) { Remove-Item -LiteralPath $sandbox -Recurse -Force }
 }
+
+exit 0

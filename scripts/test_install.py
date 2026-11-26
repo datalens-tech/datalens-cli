@@ -107,6 +107,7 @@ if [ -n "$out" ]; then cp "$file" "$out"; else cat "$file"; fi
         else:
             self.assertNotEqual(result.returncode, 0, result.stdout)
             self.assertNotIn("To configure a profile", result.stdout)
+            return result.stderr
         return result.stdout
 
     def test_release_targets(self):
@@ -186,7 +187,7 @@ if [ -n "$out" ]; then cp "$file" "$out"; else cat "$file"; fi
         config.write_text('{"profiles":{}}')
         self.release("0.2.0")
         self.env["PATH"] = f"{install_dir}:{self.env['PATH']}"
-        self.assertEqual(self.install().splitlines()[-1].strip(), "datalens setup")
+        self.assertEqual(shlex.split(self.install().splitlines()[-1]), [str(exe), "setup"])
         self.assertEqual(exe.read_text(), "0.2.0 linux_amd64")
         self.release("0.3.0")
         binary = self.root / "datalens"
@@ -235,6 +236,28 @@ esac
         self.env["DATALENS_CLI_INSTALL_VERSION"] = "0.3.0-beta.1"
         self.install()
         self.assertEqual((self.home / ".local/bin/datalens").read_text(), "0.3.0-beta.1 linux_amd64")
+
+    def test_shadowed_pinned_install_uses_exact_setup_path(self):
+        self.release("0.2.0-beta.10")
+        old = self.root / "tools/datalens"
+        old.write_text("#!/bin/sh\nexit 1\n")
+        old.chmod(0o755)
+        install_dir = self.home / "pinned user's bin"
+        self.env.update(DATALENS_INSTALL_DIR=str(install_dir), DATALENS_CLI_INSTALL_VERSION="v0.2.0-beta.10")
+        self.env["PATH"] += f":{install_dir}"
+        output = self.install()
+        self.assertEqual(shlex.split(output.splitlines()[-1]), [str(install_dir / "datalens"), "setup"])
+
+    def test_upgrade_rejects_existing_public_config_directory(self):
+        self.release("0.1.0")
+        self.install()
+        self.config.chmod(0o755)
+        self.release("0.2.0")
+        error = self.install(success=False)
+        self.assertIn("chmod", error)
+        self.assertIn(str(self.config), error)
+        self.assertEqual(self.config.stat().st_mode & 0o777, 0o755)
+        self.assertEqual((self.home / ".local/bin/datalens").read_text(), "0.1.0 linux_amd64")
 
     def test_linux_xdg_and_unsupported_target(self):
         self.release("0.2.0")

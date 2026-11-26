@@ -127,18 +127,22 @@ main() {
     chmod 755 "$stage"
     [ ! -L "$config_dir" ] || fail "The configuration directory is a symbolic link: $config_dir"
     (umask 077 && mkdir -p "$config_dir")
+    if [ "$os" != windows ]; then
+        mode=$(stat -c '%a' "$config_dir" 2>/dev/null || stat -f '%Lp' "$config_dir") || fail "Cannot check permissions on $config_dir."
+        case "$mode" in
+            *00) ;;
+            *) fail "Only the owner may access the configuration directory. Run chmod go-rwx on this directory and retry: $config_dir" ;;
+        esac
+    fi
     mv -f "$stage" "$target"
     stage=''
     printf 'Installed DataLens CLI %s to %s\n' "$tag" "$target"
     case ":${PATH:-}:" in
-        *":$install_dir:"*) setup_command=datalens ;;
-        *)
-            printf 'Add this directory to your PATH: %s\n' "$install_dir"
-            escaped_target=$(printf '%s' "$target" | sed "s/'/'\"'\"'/g")
-            setup_command="'$escaped_target'"
-            ;;
+        *":$install_dir:"*) ;;
+        *) printf 'Add this directory to your PATH: %s\n' "$install_dir" ;;
     esac
-    printf 'To configure a profile, run:\n  %s setup\n' "$setup_command"
+    escaped_target=$(printf '%s' "$target" | sed "s/'/'\"'\"'/g")
+    printf "To configure a profile, run:\n  '%s' setup\n" "$escaped_target"
 }
 
 main "$@"

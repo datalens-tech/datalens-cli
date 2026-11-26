@@ -35,6 +35,16 @@ func ValidateArgs(action, installation, explicitProfile string, args json.RawMes
 	if !numbersRepresentable(value) {
 		return &output.Error{Code: "INVALID_USAGE", Message: "A number in the JSON object exceeds the range supported by schema validation.", ExitCode: 2}
 	}
+	if action == "getAuditEntriesUpdates" {
+		fields, _ := value.(map[string]any)
+		for _, key := range []string{"from", "to"} {
+			timestamp, ok := fields[key].(string)
+			// The audit API also accepts minute precision; validate it as zero seconds.
+			if ok && len(timestamp) > 16 && timestamp[10] == 'T' && strings.ContainsRune("Z+-", rune(timestamp[16])) {
+				fields[key] = timestamp[:16] + ":00" + timestamp[16:]
+			}
+		}
+	}
 	if err := schema.Validate(value); err != nil {
 		var problem *jsonschema.ValidationError
 		if !errors.As(err, &problem) {
@@ -43,8 +53,9 @@ func ValidateArgs(action, installation, explicitProfile string, args json.RawMes
 		profileFlag := profileOption(explicitProfile)
 		message := fmt.Sprintf("Invalid arguments for %s: %s.", action, validationProblem(problem))
 		if example := minimalExample(schema); len(example) != 0 {
-			message += "\nMinimal example (from the schema):\n  " + exampleCommand(action, profileFlag, string(example))
-		} else if fields, err := c.summarize(op.Schema, map[string]bool{}); err == nil {
+			message += "\nMinimal example (from the schema):\n  " + ExampleCommands(action, string(example), profileFlag)
+		} else {
+			fields := summarize(schema, map[*jsonschema.Schema]bool{})
 			if len(fields.required) > 0 {
 				message += "\nRequired: " + strings.Join(slices.Sorted(maps.Keys(fields.required)), ", ")
 			}
@@ -98,6 +109,7 @@ func compileSchema(raw json.RawMessage) (*jsonschema.Schema, error) {
 	const resource = "urn:datalens:rpc-arguments"
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft2020)
+	compiler.AssertFormat()
 	compiler.UseLoader(jsonschema.SchemeURLLoader{})
 	if err := compiler.AddResource(resource, doc); err != nil {
 		return nil, err

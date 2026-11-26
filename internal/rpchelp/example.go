@@ -103,6 +103,14 @@ func exampleValue(s *jsonschema.Schema, name string, depth int) (any, bool) {
 		switch typ {
 		case "string":
 			label := "your-" + strings.ReplaceAll(splitCamelCase(name), "_", "-")
+			if s.Format != nil {
+				switch s.Format.Name {
+				case "date":
+					label = "2025-01-01"
+				case "date-time":
+					label = "2025-01-01T00:00:00Z"
+				}
+			}
 			if s.MinLength != nil && len(label) < *s.MinLength && *s.MinLength <= 256 {
 				label += strings.Repeat("x", *s.MinLength-len(label))
 			}

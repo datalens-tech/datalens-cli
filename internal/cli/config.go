@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/datalens-tech/datalens-cli/internal/config"
@@ -101,8 +102,14 @@ func splitTokenCommand(command string) ([]string, error) {
 }
 
 type profileSummary struct {
-	Name string `json:"name"`
-	config.Profile
+	Name            string            `json:"name"`
+	Installation    string            `json:"installationType,omitempty"`
+	Endpoint        string            `json:"endpoint,omitempty"`
+	APIEndpoint     string            `json:"apiEndpoint,omitempty"`
+	OrganizationID  string            `json:"organizationId,omitempty"`
+	HasTokenCommand bool              `json:"hasTokenCommand,omitempty"`
+	ServiceAccount  map[string]string `json:"serviceAccount,omitempty"`
+	Problem         string            `json:"problem,omitempty"`
 }
 
 func (a *app) listProfilesCommand() *cobra.Command {
@@ -122,7 +129,7 @@ func (a *app) listProfilesCommand() *cobra.Command {
 			if len(document.Profiles) == 0 {
 				text.WriteString(config.NoProfilesMessage + "\n")
 			} else {
-				selected, _, err = config.Resolve(document, a.profile, a.options.LookupEnv("DATALENS_PROFILE"))
+				selected, err = document.SelectedName(a.profile, a.options.LookupEnv("DATALENS_PROFILE"))
 				if err != nil {
 					return err
 				}
@@ -130,12 +137,26 @@ func (a *app) listProfilesCommand() *cobra.Command {
 			profiles := make([]profileSummary, 0, len(document.Profiles))
 			for _, name := range slices.Sorted(maps.Keys(document.Profiles)) {
 				profile := document.Profiles[name]
-				profiles = append(profiles, profileSummary{Name: name, Profile: profile})
+				problem := profile.Problem(name)
+				summary := profileSummary{Name: name, Problem: problem}
+				if problem == "" {
+					summary.Installation, summary.Endpoint, summary.APIEndpoint = profile.Installation, profile.Endpoint, profile.APIEndpoint
+					summary.OrganizationID = profile.OrganizationID
+					summary.HasTokenCommand = len(profile.TokenCommand) > 0
+					if sa := profile.ServiceAccount; sa != nil {
+						summary.ServiceAccount = map[string]string{"id": sa.ID, "keyId": sa.KeyID}
+					}
+				}
+				profiles = append(profiles, summary)
 				marker := " "
 				if name == selected {
 					marker = "*"
 				}
-				fmt.Fprintf(&text, "%s %s\t%s\t%s\n", marker, name, profile.Installation, profile.Endpoint)
+				if problem != "" {
+					fmt.Fprintf(&text, "%s %s\tinvalid: %s\n", marker, displayProfileName(name), problem)
+				} else {
+					fmt.Fprintf(&text, "%s %s\t%s\t%s\n", marker, name, profile.Installation, profile.Endpoint)
+				}
 			}
 			return a.writer.Result(struct {
 				Profiles        []profileSummary `json:"profiles"`
@@ -144,6 +165,13 @@ func (a *app) listProfilesCommand() *cobra.Command {
 			}{profiles, document.CurrentProfile, selected}, text.String())
 		},
 	}
+}
+
+func displayProfileName(name string) string {
+	if config.ValidProfileName(name) {
+		return name
+	}
+	return strconv.QuoteToASCII(name)
 }
 
 func (a *app) activateProfileCommand() *cobra.Command {
@@ -183,16 +211,19 @@ func (a *app) deleteProfileCommand() *cobra.Command {
 			if err := doc.CheckDeletable(name); err != nil {
 				return err
 			}
+			var expected *config.SavedProfile
 			if !hasConfirm {
+				profile := doc.Profiles[name]
+				expected = &profile
 				if err := a.confirmDeletion(cmd.Context(), name); err != nil {
 					return err
 				}
 			}
-			empty, err := store.Delete(cmd.Context(), name)
+			empty, err := store.Delete(cmd.Context(), name, expected)
 			if err != nil {
 				return err
 			}
-			message := fmt.Sprintf("Deleted profile %s.\n", name)
+			message := fmt.Sprintf("Deleted profile %s.\n", displayProfileName(name))
 			if empty {
 				message += config.NoProfilesMessage + "\n"
 			}

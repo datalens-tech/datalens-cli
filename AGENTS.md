@@ -1,5 +1,7 @@
 # DataLens CLI
 
+Use [Conventional Commits for new commits and PR titles](CONTRIBUTING.md#commits-and-pull-request-titles).
+
 ## Updating RPC schemas
 
 Follow [the catalog refresh procedure](README.md#refresh-the-rpc-catalogs). The generated catalogs in `internal/rpchelp` drive four things: `rpc ACTION --help`, `schema show ACTION`, argument validation before authentication, and the minimal command printed on validation errors.

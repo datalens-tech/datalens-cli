@@ -1,0 +1,72 @@
+name: Draft release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+'
+
+concurrency:
+  group: release-${{ github.ref }}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: ${{ !github.event.deleted }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build and verify release files
+        shell: bash
+        run: |
+          number='(0|[1-9][0-9]*)'
+          if ! [[ $GITHUB_REF_NAME =~ ^v${number}\.${number}\.${number}(-beta\.${number})?$ ]]; then
+            echo "Expected a tag like v0.1.0 or v0.1.0-beta.1" >&2
+            exit 1
+          fi
+          make check test
+          python3 -B scripts/test_install.py
+          make dist verify-dist VERSION="${GITHUB_REF_NAME#v}"
+      - name: Create or complete the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$GITHUB_REF_NAME
+          files=(dist/"${tag#v}"/*)
+          beta=false
+          if [[ $tag == *-beta.* ]]; then beta=true; fi
+
+          release=$(gh api --paginate 'repos/{owner}/{repo}/releases?per_page=100' |
+            jq -sc 'add | map(select(.tag_name == env.GITHUB_REF_NAME)) |
+              if length > 1 then error("Multiple releases for this tag") else first end')
+          if [[ $release == null ]]; then
+            gh release create "$tag" "${files[@]}" --verify-tag --draft --prerelease="$beta" --title "$tag" --generate-notes
+            exit 0
+          fi
+          if ! jq -e --argjson beta "$beta" '.draft and .prerelease == $beta' <<< "$release" >/dev/null; then
+            echo "The existing release must be a draft on the same release channel." >&2
+            exit 1
+          fi
+
+          missing=()
+          for file in "${files[@]}"; do
+            digest=$(jq -r --arg name "${file##*/}" '.assets[] | select(.name == $name) | .digest' <<< "$release")
+            if [[ -z $digest ]]; then
+              missing+=("$file")
+            elif [[ $digest != "sha256:$(sha256sum "$file" | cut -d' ' -f1)" ]]; then
+              echo "Existing draft asset differs: ${file##*/}" >&2
+              exit 1
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            gh release upload "$tag" "${missing[@]}"
+          fi

@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  VERSION: 0.0.0
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make check test
+      - run: python3 -B scripts/test_install.py
+  distribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make dist
+      - run: make verify-dist
+      - run: make dist verify-dist TARGETS=windows/amd64 VERSION="$VERSION-beta.2"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-install-fixture
+          path: |
+            dist/*/datalens_*_windows_amd64.zip
+            dist/*/SHA256SUMS
+            dist/${{ env.VERSION }}/install.ps1
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+  windows-install:
+    needs: distribution
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-install-fixture
+          path: windows-release
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - name: Install and run the Windows release
+        shell: powershell
+        run: ./scripts/test_windows_install.ps1 -Assets windows-release -Version $env:VERSION -Revision $env:GITHUB_SHA

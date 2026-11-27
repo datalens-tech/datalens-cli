@@ -28,6 +28,14 @@ Replace the bracketed text as follows:
 
 It is enough to provide us such notification once.
 
+## Commits and pull request titles
+
+Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for new commits and PR titles. We squash each PR into one commit on `main`, so choose a title that describes the whole change.
+
+Start with a type and a short description, such as `fix: preserve the active profile`. For a new feature, use `feat` and optionally name the affected area, as in `feat(rpc): read arguments from stdin`. Other accepted types are `build`, `chore`, `ci`, `docs`, `perf`, `refactor`, `revert`, `style`, and `test`.
+
+For a breaking change, add `!` before the colon, as in `feat(rpc)!: remove the --args flag`, and explain how users can migrate in the PR description. The release maintainer chooses the version and tag according to the [CLI versioning policy](README.md#versioning-and-compatibility).
+
 ## Other questions
 
 If you have any questions, please mail us at datalens-opensource@yandex-team.ru.

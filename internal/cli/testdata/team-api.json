@@ -1,0 +1,69 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Test API",
+    "version": "3"
+  },
+  "paths": {
+    "/rpc/getDashboard": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "dashboardId": {
+                    "type": "string"
+                  },
+                  "branch": {
+                    "enum": [
+                      "published",
+                      "saved"
+                    ]
+                  }
+                },
+                "required": [
+                  "dashboardId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rpc/listSharedEntryAccessBindings": {
+      "post": {
+        "description": "Returns the access bindings of the specified shared entry."
+      }
+    },
+    "/rpc/updateEditorChartSecrets": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "chartId": {
+                    "$ref": "#/components/schemas/ChartId"
+                  }
+                },
+                "required": [
+                  "chartId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChartId": {
+        "type": "string"
+      }
+    }
+  }
+}
